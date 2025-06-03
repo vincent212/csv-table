@@ -6,7 +6,7 @@ CSVTableProject is a C++ project that provides a convenient way to read, manipul
 
 - Read CSV files with automatic type inference for cell values
 - Access and modify cell values using row indices and column names
-- Support for various data types including strings adddddd, integers, doubles, booleans, and uint64_t
+- Support for various data types including strings, integers, doubles, booleans, and uint64_t
 - Iterate over rows and columns easily
 - Manipulate table structure by adding or removing columns
 - Apply functions to entire columns
