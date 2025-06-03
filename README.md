@@ -42,6 +42,3 @@ Unit tests are provided in `CSVTableTests.cpp` and use Google Test. To run the t
 
 For users familiar with Python's pandas library, [pandascomparison.md](pandascomparison.md) provides a comparison between `CSVTable` and pandas, highlighting similarities and differences in functionality and usage.
 
-## License
-
-[Add license information here, if applicable]
