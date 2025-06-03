@@ -29,9 +29,7 @@ The `CSVTable` struct, implemented in C++23, is designed to read, manipulate, an
 - **Sort by Column**: Sorts rows by a specified column in ascending or descending order, ensuring type consistency.
 
 ## Merging and Joining
-- **Standard Merge**: Combines two tables based on common columns with join types (`"inner"`, `"left"`, `"right"`, `"outer"`).
-- **First Merge**: Merges with another table, matching each row to the first row in the other table satisfying a predicate, with sorting options.
-- **Predicate Merge**: Merges rows based on a custom predicate involving key columns and row indices.
+- **Merge**: Combines two tables based on common columns with join types (`"inner"`, `"left"`, `"right"`, `"outer"`).
 - **Join**: Combines tables based on row indices with join types (`"inner"`, `"left"`, `"right"`, `"outer"`).
 
 ## Utility

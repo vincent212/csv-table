@@ -13,7 +13,6 @@ The `CSVTable` struct, implemented in C++23, and Python's `pandas` library are b
 #### CSVTable
 - **Strengths**:
   - **Core CSV Operations**: Supports essential CSV operations like reading/writing, filtering rows, sorting, merging/joining, adding/deleting columns, renaming columns, handling missing values (`dropna`, `fillna`), and dropping duplicates.
-  - **Custom Merges**: Offers specialized merge operations (`merge_first`, `merge_predicate`) with predicate-based logic, allowing fine-grained control over row matching.
   - **Type Safety**: Uses `std::variant` to restrict cell values to `string`, `int`, `double`, or `bool`, ensuring compile-time type safety and reducing runtime errors.
   - **Lightweight**: Minimal dependencies (only standard C++23 library), making it suitable for environments where external libraries are restricted.
 - **Weaknesses**:
@@ -115,7 +114,7 @@ The `CSVTable` struct, implemented in C++23, and Python's `pandas` library are b
 
 | Aspect             | CSVTable Strengths                              | CSVTable Weaknesses                              | Pandas Strengths                                | Pandas Weaknesses                              |
 |--------------------|------------------------------------------------|-------------------------------------------------|------------------------------------------------|-----------------------------------------------|
-| **Functionality**  | Core CSV operations, custom merges, type safety | Limited advanced features, basic types only      | Extensive operations, dynamic typing, ecosystem | Heavy dependencies, less type safety           |
+| **Functionality**  | Core CSV operations, type safety | Limited advanced features, basic types only      | Extensive operations, dynamic typing, ecosystem | Heavy dependencies, less type safety           |
 | **Performance**    | High speed, low memory footprint                | No parallelization, manual optimization needed   | Vectorized operations, scalable with Dask       | Python overhead, memory-intensive              |
 | **Usability**      | Simple API, compile-time safety, no dependencies | Steep C++ learning curve, verbose syntax         | User-friendly, great documentation, interactive | Complex setup, dynamic typing errors           |
 | **Extensibility**  | Customizable, standalone                        | No ecosystem, no plugins                        | Vast ecosystem, extensible                      | Dependency management issues                   |
