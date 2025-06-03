@@ -1,0 +1,10 @@
+build/*
+*.make
+*.cmake
+*.check*
+CMakeCache.txt
+example_uint64
+examples
+tests
+CMakeFiles/*
+
