@@ -364,6 +364,10 @@ namespace m2
                 return index_ != other.index_;
             }
 
+            bool operator==(const RowIterator& other) const {
+                return index_ == other.index_;
+            }
+
         private:
             CSVTable* table_;
             size_t index_;
@@ -385,6 +389,10 @@ namespace m2
 
             bool operator!=(const ConstRowIterator& other) const {
                 return index_ != other.index_;
+            }
+
+            bool operator==(const ConstRowIterator& other) const {
+                return index_ == other.index_;
             }
 
         private:
@@ -1286,6 +1294,38 @@ namespace m2
                 // Append rows from the other table
                 rows.insert(rows.end(), other.rows.begin(), other.rows.end());
             }
+        }
+
+
+        /**
+         * @brief Performs a binary search on the specified column to find the row with the value equal to the given value,
+         * or the first row with a value greater than the given value if no exact match is found.
+         *
+         * The table must be sorted by the specified column using sort_by_column<T> with the same type T before calling this method.
+         *
+         * @tparam T The type to which the column values are converted for comparison.
+         * @param col_name The name of the column to search on.
+         * @param value The value to search for.
+         * @return ConstRowIterator An iterator to the found row, or the end iterator if no such row exists.
+         * @throws std::invalid_argument If the column name is not found.
+         * @throws std::runtime_error If conversion of cell values fails.
+         */
+        template <typename T>
+        ConstRowIterator find(std::string_view col_name, const T& value) const {
+            auto it = col_map.find(col_name);
+            if (it == col_map.end()) {
+                throw std::invalid_argument("Column name not found: " + std::string(col_name));
+            }
+            int col_index = it->second;
+
+            auto comp = [col_index](const std::vector<CellValue>& row, const T& val) {
+                T row_val = CSVTable::convert_cell<T>(row[col_index]);
+                return row_val < val;
+            };
+
+            auto vec_it = std::lower_bound(rows.cbegin(), rows.cend(), value, comp);
+            size_t index = std::distance(rows.cbegin(), vec_it);
+            return ConstRowIterator(this, index);
         }
 
     private:

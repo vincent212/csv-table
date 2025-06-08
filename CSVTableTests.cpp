@@ -428,6 +428,59 @@ TEST_F(CSVTableTest, AppendFiles) {
     std::filesystem::remove(file3);
 }
 
+// Helper function to add a row to the table
+void add_row(CSVTable& table, const std::vector<CSVTable::CellValue>& values) {
+    table.append_row(values);
+}
+
+// Test case for the find method
+TEST_F(CSVTableTest, FindFeature) {
+    CSVTable table;
+    // Initialize table with columns: "name" (string), "age" (int)
+    table.add_column<std::string>("name", "");
+    table.add_column<int>("age", 0);
+
+    // Add rows
+    add_row(table, {"Alice", 25});
+    add_row(table, {"Bob", 30});
+    add_row(table, {"Charlie", 35});
+    add_row(table, {"David", 40});
+
+    // Sort the table by "age" in ascending order
+    table.sort_by_column<int>("age", true);
+
+    // Create a const reference to table to get ConstRowIterator from end()
+    const auto& const_table = table;
+
+    // Test 1: Exact match found
+    auto it1 = table.find<int>("age", 30);
+    ASSERT_NE(it1, const_table.end()) << "Iterator should not be at end for exact match";
+    const auto& row1 = *it1;
+    EXPECT_EQ(std::get<std::string>(row1[0]), "Bob") << "Name should be Bob";
+    EXPECT_EQ(std::get<int>(row1[1]), 30) << "Age should be 30";
+
+    // Test 2: No exact match, find first greater
+    auto it2 = table.find<int>("age", 32);
+    ASSERT_NE(it2, const_table.end()) << "Iterator should point to first greater value";
+    const auto& row2 = *it2;
+    EXPECT_EQ(std::get<std::string>(row2[0]), "Charlie") << "Name should be Charlie";
+    EXPECT_EQ(std::get<int>(row2[1]), 35) << "Age should be 35";
+
+    // Test 3: All values less than the search value
+    auto it3 = table.find<int>("age", 45);
+    EXPECT_EQ(it3, const_table.end()) << "Iterator should be at end when value exceeds all";
+
+    // Test 4: Column not found
+    EXPECT_THROW({
+        table.find<int>("height", 30);
+    }, std::invalid_argument) << "Should throw invalid_argument for unknown column";
+
+    // Test 5: Conversion failure
+    EXPECT_THROW({
+        table.find<int>("name", 30);
+    }, std::invalid_argument) << "Should throw invalid_argument for type mismatch";
+}
+
 } // namespace m2
 
 int main(int argc, char **argv) {
