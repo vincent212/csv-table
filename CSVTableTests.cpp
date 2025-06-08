@@ -434,7 +434,7 @@ void add_row(CSVTable& table, const std::vector<CSVTable::CellValue>& values) {
 }
 
 // Test case for the find method
-TEST_F(CSVTableTest, FindFeature) {
+TEST_F(CSVTableTest, LowerBound) {
     CSVTable table;
     // Initialize table with columns: "name" (string), "age" (int)
     table.add_column<std::string>("name", "");
@@ -453,33 +453,143 @@ TEST_F(CSVTableTest, FindFeature) {
     const auto& const_table = table;
 
     // Test 1: Exact match found
-    auto it1 = table.find<int>("age", 30);
+    auto it1 = table.lower_bound<int>("age", 30);
     ASSERT_NE(it1, const_table.end()) << "Iterator should not be at end for exact match";
     const auto& row1 = *it1;
     EXPECT_EQ(std::get<std::string>(row1[0]), "Bob") << "Name should be Bob";
     EXPECT_EQ(std::get<int>(row1[1]), 30) << "Age should be 30";
 
     // Test 2: No exact match, find first greater
-    auto it2 = table.find<int>("age", 32);
+    auto it2 = table.lower_bound<int>("age", 32);
     ASSERT_NE(it2, const_table.end()) << "Iterator should point to first greater value";
     const auto& row2 = *it2;
     EXPECT_EQ(std::get<std::string>(row2[0]), "Charlie") << "Name should be Charlie";
     EXPECT_EQ(std::get<int>(row2[1]), 35) << "Age should be 35";
 
     // Test 3: All values less than the search value
-    auto it3 = table.find<int>("age", 45);
+    auto it3 = table.lower_bound<int>("age", 45);
     EXPECT_EQ(it3, const_table.end()) << "Iterator should be at end when value exceeds all";
 
     // Test 4: Column not found
     EXPECT_THROW({
-        table.find<int>("height", 30);
+        table.lower_bound<int>("height", 30);
     }, std::invalid_argument) << "Should throw invalid_argument for unknown column";
 
     // Test 5: Conversion failure
     EXPECT_THROW({
-        table.find<int>("name", 30);
+        table.lower_bound<int>("name", 30);
     }, std::invalid_argument) << "Should throw invalid_argument for type mismatch";
 }
+
+// Test finding an existing integer value
+TEST_F(CSVTableTest, FindIntegerExisting) {
+    CSVTable table;
+    table.add_column<int>("id");
+    table.add_column<std::string>("name");
+    // Add rows in sorted order by "id"
+    add_row(table, {1, "Alice"});
+    add_row(table, {2, "Bob"});
+    add_row(table, {3, "Charlie"});
+    add_row(table, {4, "David"});
+    const auto& const_table = table;
+    auto it = table.find<int>("id", 3);
+    ASSERT_NE(it, const_table.end()) << "Iterator should not be at end for exact match";
+    const auto& row = *it;
+    EXPECT_EQ(std::get<int>(row[0]), 3);
+    EXPECT_EQ(std::get<std::string>(row[1]), "Charlie");
+}
+
+// Test finding a non-existing integer value
+TEST_F(CSVTableTest, FindIntegerNonExisting) {
+    CSVTable table;
+    table.add_column<int>("id");
+    table.add_column<std::string>("name");
+    add_row(table, {1, "Alice"});
+    add_row(table, {2, "Bob"});
+    add_row(table, {3, "Charlie"});
+    add_row(table, {4, "David"});
+    const auto& const_table = table;
+    auto it = table.find<int>("id", 5);
+    EXPECT_EQ(it, const_table.end()) << "Iterator should be at end for non-existing value";
+}
+
+// Test finding an integer smaller than all values
+TEST_F(CSVTableTest, FindIntegerSmallerThanAll) {
+    CSVTable table;
+    table.add_column<int>("id");
+    table.add_column<std::string>("name");
+    add_row(table, {1, "Alice"});
+    add_row(table, {2, "Bob"});
+    add_row(table, {3, "Charlie"});
+    add_row(table, {4, "David"});
+    const auto& const_table = table;
+    auto it = table.find<int>("id", 0);
+    EXPECT_EQ(it, const_table.end()) << "Iterator should be at end for value smaller than all";
+}
+
+// Test finding an integer larger than all values
+TEST_F(CSVTableTest, FindIntegerLargerThanAll) {
+    CSVTable table;
+    table.add_column<int>("id");
+    table.add_column<std::string>("name");
+    add_row(table, {1, "Alice"});
+    add_row(table, {2, "Bob"});
+    add_row(table, {3, "Charlie"});
+    add_row(table, {4, "David"});
+    const auto& const_table = table;
+    auto it = table.find<int>("id", 10);
+    EXPECT_EQ(it, const_table.end()) << "Iterator should be at end for value larger than all";
+}
+
+// Test finding an existing string value
+TEST_F(CSVTableTest, FindStringExisting) {
+    CSVTable table;
+    table.add_column<std::string>("name");
+    table.add_column<int>("age");
+    // Add rows in sorted order by "name"
+    add_row(table, {"Alice", 25});
+    add_row(table, {"Bob", 30});
+    add_row(table, {"Charlie", 35});
+    add_row(table, {"David", 40});
+    const auto& const_table = table;
+    auto it = table.find<std::string>("name", "Charlie");
+    ASSERT_NE(it, const_table.end()) << "Iterator should not be at end for exact match";
+    const auto& row = *it;
+    EXPECT_EQ(std::get<std::string>(row[0]), "Charlie");
+    EXPECT_EQ(std::get<int>(row[1]), 35);
+}
+
+// Test finding a non-existing string value
+TEST_F(CSVTableTest, FindStringNonExisting) {
+    CSVTable table;
+    table.add_column<std::string>("name");
+    table.add_column<int>("age");
+    add_row(table, {"Alice", 25});
+    add_row(table, {"Bob", 30});
+    add_row(table, {"Charlie", 35});
+    add_row(table, {"David", 40});
+    const auto& const_table = table;
+    auto it = table.find<std::string>("name", "Eve");
+    EXPECT_EQ(it, const_table.end()) << "Iterator should be at end for non-existing value";
+}
+
+// Test finding in an empty table
+TEST_F(CSVTableTest, FindInEmptyTable) {
+    CSVTable table;
+    table.add_column<int>("id");
+    const auto& const_table = table;
+    auto it = table.find<int>("id", 1);
+    EXPECT_EQ(it, const_table.end()) << "Iterator should be at end for empty table";
+}
+
+// Test finding with a non-existent column
+TEST_F(CSVTableTest, FindNonExistentColumn) {
+    CSVTable table;
+    table.add_column<int>("id");
+    add_row(table, {1});
+    EXPECT_THROW(table.find<int>("nonexistent", 1), std::invalid_argument) << "Should throw invalid_argument for non-existent column";
+}
+
 
 } // namespace m2
 

@@ -540,15 +540,19 @@ namespace m2
                         {
                             cell = std::stoi(str);
                         }
+                        else if constexpr (std::is_same_v<T, uint64_t>)
+                        {
+                            cell = std::stoull(str);
+                        }
                         else if constexpr (std::is_same_v<T, double>)
                         {
                             cell = std::stod(str);
                         }
                         else if constexpr (std::is_same_v<T, bool>)
                         {
-                            if (str == "true")
+                            if (str == "true" ||"1" == str)
                                 cell = true;
-                            else if (str == "false")
+                            else if (str == "false" || "0" == str)
                                 cell = false;
                             else
                                 throw std::runtime_error("Invalid boolean value");
@@ -628,7 +632,7 @@ namespace m2
          * @throws std::invalid_argument If the column already exists.
          */
         template <ConvertibleToCellValue T>
-        void add_column(std::string_view col_name, const T &default_value)
+        void add_column(std::string_view col_name, const T &default_value = T())
         {
             if (col_map.contains(col_name))
             {
@@ -1311,7 +1315,7 @@ namespace m2
          * @throws std::runtime_error If conversion of cell values fails.
          */
         template <typename T>
-        ConstRowIterator find(std::string_view col_name, const T& value) const {
+        ConstRowIterator lower_bound(std::string_view col_name, const T& value) const {
             auto it = col_map.find(col_name);
             if (it == col_map.end()) {
                 throw std::invalid_argument("Column name not found: " + std::string(col_name));
@@ -1326,6 +1330,61 @@ namespace m2
             auto vec_it = std::lower_bound(rows.cbegin(), rows.cend(), value, comp);
             size_t index = std::distance(rows.cbegin(), vec_it);
             return ConstRowIterator(this, index);
+        }
+
+        /**
+         * @brief Finds a row in the table where the specified column matches the given value.
+         *
+         * This method performs a binary search on the specified column to locate a row
+         * where the column's value matches the provided value. The column must be sorted
+         * in ascending order for the search to work correctly.
+         *
+         * @tparam T The type of the value to search for. It must match the type of the column's values.
+         * @param col_name The name of the column to search in.
+         * @param value The value to search for in the specified column.
+         * @return ConstRowIterator An iterator pointing to the row where the column value matches the given value.
+         *         If no match is found, it returns the end iterator.
+         * @throws std::invalid_argument If the specified column name does not exist in the table.
+         */
+        template <typename T>
+        ConstRowIterator find(std::string_view col_name, const T& value) const {
+            auto it = col_map.find(col_name);
+            if (it == col_map.end()) {
+                throw std::invalid_argument("Column not found: " + std::string(col_name));
+            }
+            int col_index = it->second;
+
+            auto comp = [col_index](const auto& row, const T& val) {
+                return CSVTable::convert_cell<T>(row[col_index]) < val;
+            };
+
+            auto vec_it = std::lower_bound(rows.begin(), rows.end(), value, comp);
+
+            if (vec_it != rows.end() && CSVTable::convert_cell<T>((*vec_it)[col_index]) == value) {
+                size_t index = std::distance(rows.begin(), vec_it);
+                return ConstRowIterator(this, index);
+            } else {
+                return ConstRowIterator(this, rows.size());
+            }
+        }
+
+        /**
+         * @brief Sets all values in a specified column to a single value.
+         * @tparam T The type of the value to set (must be convertible to CellValue).
+         * @param col_name The name of the column to set.
+         * @param value The value to set for the entire column.
+         * @throws std::invalid_argument If the column does not exist.
+         */
+        template <ConvertibleToCellValue T>
+        void set_column_to_value(std::string_view col_name, T value) {
+            auto it = col_map.find(col_name);
+            if (it == col_map.end()) {
+                throw std::invalid_argument("Column not found: " + std::string(col_name));
+            }
+            int col_index = it->second;
+            for (auto &row : rows) {
+                row[col_index] = value;
+            }
         }
 
     private:
