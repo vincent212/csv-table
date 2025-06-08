@@ -281,6 +281,17 @@ namespace m2
                     return std::get<uint64_t>(value) != 0;
                 }
             }
+            if constexpr (std::is_same_v<T, uint64_t>)
+            {
+                if (std::holds_alternative<int>(value))
+                {
+                    return static_cast<uint64_t>(std::get<int>(value));
+                }
+                else if (std::holds_alternative<double>(value))
+                {
+                    return static_cast<uint64_t>(std::get<double>(value));
+                }
+            }
             throw std::runtime_error("Type mismatch: Cannot convert CellValue to the requested type");
         }
 
@@ -416,6 +427,14 @@ namespace m2
 
         ConstRowIterator end() const {
             return ConstRowIterator(this, rows.size());
+        }
+
+        ConstRowIterator cend() const {
+            return end();
+        }
+
+        ConstRowIterator cbegin() const {
+            return begin();
         }
 
          /**
