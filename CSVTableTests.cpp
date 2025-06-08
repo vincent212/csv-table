@@ -6,23 +6,33 @@
 
 namespace m2 {
 
+    // Helper function to write CSV content to a file
+void write_csv(const std::string& filename, const std::string& content) {
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        throw std::runtime_error("Cannot create file: " + filename);
+    }
+    file << content;
+    file.close();
+}
+
 class CSVTableTest : public ::testing::Test {
 protected:
     void SetUp() override {
         // Create a temporary CSV file for testing
         create_test_csv("test.csv", {
-            R"("Name","Age","Score","ID")",
-            R"("Alice","25","90.5","123456789012345")",
-            R"("Bob","30","85.0","987654321098765")",
-            R"("Charlie","","95.0","555555555555555")"
+            "Name,Age,Score,ID",
+            "Alice,25,90.5,123456789012345",
+            "Bob,30,85.0,987654321098765",
+            "Charlie,,95.0,555555555555555"
         });
 
         // Create a second CSV file for merge/join tests
         create_test_csv("test2.csv", {
-            R"("Name","Age","City")",
-            R"("Alice","25","New York")",
-            R"("Bob","35","London")",
-            R"("David","40","Paris")"
+            "Name,Age,City",
+            "Alice,25,New York",
+            "Bob,35,London",
+            "David,40,Paris"
         });
     }
 
@@ -61,9 +71,9 @@ TEST_F(CSVTableTest, ConstructorAndFileReading) {
 // Test 2: Set column type
 TEST_F(CSVTableTest, SetColumnType) {
     create_test_csv("test_type.csv", {
-        R"("Name","Age","Score","ID")",
-        R"("Alice","25","90.5","123456789012345")",
-        R"("Bob","invalid","85.0","987654321098765")"
+        "Name,Age,Score,ID",
+        "Alice,25,90.5,123456789012345",
+        "Bob,invalid,85.0,987654321098765"
     });
     CSVTable table("test_type.csv");
 
@@ -205,7 +215,7 @@ TEST_F(CSVTableTest, ApplyToColumn) {
         }, value) + 1;
     });
     EXPECT_EQ(table.get<int>(0, "Age"), 26) << "Apply to column: Age incremented";
-    EXPECT_EQ(table.get<int>(2, "Age"), 1) << "Apply to column: Missing Age set to 0";
+    EXPECT_EQ(table.get<int>(2, "Age"), 0) << "Apply to column: Missing Age set to 0";
 
     // Test 2: Add 1000 to ID (uint64_t)
     table.set_column_type<uint64_t>("ID");
@@ -362,9 +372,9 @@ TEST_F(CSVTableTest, SaveToFile) {
     std::ifstream file("output.csv");
     std::string line;
     std::getline(file, line);
-    EXPECT_EQ(line, R"("Name","Age","Score","ID")") << "Save to file: Header";
+    EXPECT_EQ(line, "Name,Age,Score,ID") << "Save to file: Header";
     std::getline(file, line);
-    EXPECT_EQ(line, R"("Alice","25","90.5","123456789012345")") << "Save to file: First row";
+    EXPECT_EQ(line, "Alice,25,90.5000000000,123456789012345") << "Save to file: First row";
 
     // Test failure: Invalid file path
     EXPECT_THROW(table.save_to_file("/invalid/path/output.csv"), std::runtime_error) << "Save to file: Invalid path";
@@ -376,8 +386,46 @@ TEST_F(CSVTableTest, StreamOutput) {
     std::ostringstream oss;
     oss << table;
     std::string output = oss.str();
-    std::string expected = "Name,Age,Score,ID\nAlice,25,90.5,123456789012345\nBob,30,85,987654321098765\nCharlie,,95,555555555555555\n";
+    std::string expected = "Name,Age,Score,ID\nAlice,25,90.5000000000,123456789012345\nBob,30,85,987654321098765\nCharlie,,95,555555555555555\n";
     EXPECT_EQ(output, expected) << "Stream output: Correct format";
+}
+
+
+TEST_F(CSVTableTest, AppendFiles) {
+    // Create temporary CSV files
+    std::string file1 = "test1.csv";
+    std::string file2 = "test2.csv";
+    std::string file3 = "test3.csv";
+
+    // Write sample data to file1 and file2 with same columns
+    write_csv(file1, "Name,Age\nAlice,30\nBob,25\n");
+    write_csv(file2, "Name,Age\nCharlie,35\nDavid,28\n");
+
+    // Write sample data to file3 with different columns
+    write_csv(file3, "Name,Salary\nEve,50000\nFrank,60000\n");
+
+    // Test reading first file
+    m2::CSVTable table;
+    table.read_file(file1);
+    EXPECT_EQ(table.get_rows().size(), 2);
+    EXPECT_EQ(table.get_col_names(), std::vector<std::string>({"Name", "Age"}));
+
+    // Test appending second file
+    table.read_file(file2);
+    EXPECT_EQ(table.get_rows().size(), 4);
+    // Check specific values
+    EXPECT_EQ(table.get<std::string>(0, "Name"), "Alice");
+    EXPECT_EQ(table.get<std::string>(1, "Name"), "Bob");
+    EXPECT_EQ(table.get<std::string>(2, "Name"), "Charlie");
+    EXPECT_EQ(table.get<std::string>(3, "Name"), "David");
+
+    // Test appending file with different columns
+    EXPECT_THROW(table.read_file(file3), std::runtime_error);
+
+    // Clean up temporary files
+    std::filesystem::remove(file1);
+    std::filesystem::remove(file2);
+    std::filesystem::remove(file3);
 }
 
 } // namespace m2

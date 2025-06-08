@@ -152,7 +152,7 @@ namespace m2
                                       if (d == std::floor(d))
                                           return std::to_string(static_cast<int>(d)); // No .0 for whole numbers
                                       std::ostringstream oss;
-                                      oss << std::fixed << std::setprecision(1) << v;
+                                      oss << std::fixed << std::setprecision(10) << v;
                                       return oss.str();
                                   }
                                   else if constexpr (std::is_same_v<T, bool>)
@@ -214,11 +214,10 @@ namespace m2
         /**
          * @brief Converts a CellValue to type T, handling string conversions.
          * @param value The CellValue to convert.
-         * @param default_value The default value to use if conversion fails.
          * @return T The converted value or default_value if conversion fails.
          */
         template <ConvertibleToCellValue T>
-        static T convert_cell(const CellValue &value, const T &default_value = T())
+        static T convert_cell(const CellValue &value)
         {
             if (std::holds_alternative<T>(value))
             {
@@ -229,7 +228,7 @@ namespace m2
                 auto str = std::get<std::string>(value);
                 if (str.empty() || str == "NA" || str == "NaN" || str == "#N/A")
                 {
-                    return default_value;
+                    throw std::runtime_error("Cannot convert empty or NA string to type T");
                 }
                 if constexpr (std::is_same_v<T, int>)
                 {
@@ -245,6 +244,10 @@ namespace m2
                         return true;
                     if (str == "false")
                         return false;
+                    if (str == "1")
+                        return true;
+                    if (str == "0")
+                        return false;
                     throw std::runtime_error("Invalid boolean string: " + str);
                 }
                 else if constexpr (std::is_same_v<T, uint64_t>)
@@ -256,7 +259,29 @@ namespace m2
                     return str;
                 }
             }
-            return default_value;
+            if constexpr (std::is_same_v<T, double>)
+            {
+                if (std::holds_alternative<int>(value))
+                {
+                    return static_cast<double>(std::get<int>(value));
+                }
+                else if (std::holds_alternative<uint64_t>(value))
+                {
+                    return static_cast<double>(std::get<uint64_t>(value));
+                }
+            }
+            if constexpr (std::is_same_v<T, bool>)
+            {
+                if (std::holds_alternative<int>(value))
+                {
+                    return std::get<int>(value) != 0;
+                }
+                else if (std::holds_alternative<uint64_t>(value))
+                {
+                    return std::get<uint64_t>(value) != 0;
+                }
+            }
+            throw std::runtime_error("Type mismatch: Cannot convert CellValue to the requested type");
         }
 
         /**
@@ -282,10 +307,22 @@ namespace m2
             int col_index = it->second;
             for (auto &row : rows)
             {
-                T value = convert_cell<T>(row[col_index], T());
-                row[col_index] = func(value);
+                try{
+                    T value = convert_cell<T>(row[col_index]);
+                    row[col_index] = func(value);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    // conversion to type failed
+                    row[col_index] = func("");
+                }
             }
         }
+
+        /**
+         * @brief Constructor for an empty table.
+         */
+        CSVTable() = default;
 
         /**
          * @brief Constructor to load a CSV file.
@@ -294,55 +331,7 @@ namespace m2
          */
         CSVTable(std::string_view filename)
         {
-            std::ifstream file(filename.data());
-            if (!file.is_open())
-            {
-                throw std::runtime_error("Cannot open file: " + std::string(filename));
-            }
-
-            std::string line;
-            if (std::getline(file, line))
-            {
-                int col_index = 0;
-                auto fields = std::views::split(line, ',') |
-                              std::views::transform([](auto &&rng)
-                                                    {
-                                                        std::string s(rng.begin(), rng.end());
-                                                        if (!s.empty() && s.front() == '"' && s.back() == '"')
-                                                        {
-                                                            s = s.substr(1, s.size() - 2);
-                                                        }
-                                                        return s; });
-                for (const auto &field : fields)
-                {
-                    col_map[field] = col_index++;
-                    col_names.push_back(field);
-                }
-            }
-            else
-            {
-                throw std::runtime_error("Empty file or missing header");
-            }
-
-            while (std::getline(file, line))
-            {
-                std::vector<CellValue> row;
-                auto fields = std::views::split(line, ',') |
-                              std::views::transform([](auto &&rng)
-                                                    {
-                                                        std::string s(rng.begin(), rng.end());
-                                                        if (!s.empty() && s.front() == '"' && s.back() == '"')
-                                                        {
-                                                            s = s.substr(1, s.size() - 2);
-                                                        }
-                                                        return parse_cell(s); });
-                row.assign(fields.begin(), fields.end());
-                while (row.size() < col_names.size())
-                {
-                    row.emplace_back(std::string(""));
-                }
-                rows.push_back(std::move(row));
-            }
+            read_file(filename);
         }
 
         /**
@@ -355,6 +344,150 @@ namespace m2
                  const std::map<std::string, int, std::less<>> &column_map,
                  const std::vector<std::vector<CellValue>> &selected_rows)
             : col_names(column_names), col_map(column_map), rows(selected_rows) {}
+
+
+        // Nested iterator class for rows
+        class RowIterator {
+        public:
+            RowIterator(CSVTable* table, size_t index) : table_(table), index_(index) {}
+
+            std::vector<CellValue>& operator*() const {
+                return table_->rows[index_];
+            }
+
+            RowIterator& operator++() {
+                ++index_;
+                return *this;
+            }
+
+            bool operator!=(const RowIterator& other) const {
+                return index_ != other.index_;
+            }
+
+        private:
+            CSVTable* table_;
+            size_t index_;
+        };
+
+        // Const iterator class for const CSVTable objects
+        class ConstRowIterator {
+        public:
+            ConstRowIterator(const CSVTable* table, size_t index) : table_(table), index_(index) {}
+
+            const std::vector<CellValue>& operator*() const {
+                return table_->rows[index_];
+            }
+
+            ConstRowIterator& operator++() {
+                ++index_;
+                return *this;
+            }
+
+            bool operator!=(const ConstRowIterator& other) const {
+                return index_ != other.index_;
+            }
+
+        private:
+            const CSVTable* table_;
+            size_t index_;
+        };
+
+        // Begin and end methods for non-const objects
+        RowIterator begin() {
+            return RowIterator(this, 0);
+        }
+
+        RowIterator end() {
+            return RowIterator(this, rows.size());
+        }
+
+        // Begin and end methods for const objects
+        ConstRowIterator begin() const {
+            return ConstRowIterator(this, 0);
+        }
+
+        ConstRowIterator end() const {
+            return ConstRowIterator(this, rows.size());
+        }
+
+         /**
+         * @brief Reads a CSV file into the table, initializing or appending data.
+         * @param filename The path to the CSV file.
+         * @throws std::runtime_error If the file cannot be opened, is empty, or has mismatched columns when appending.
+         */
+        void read_file(std::string_view filename)
+        {
+            std::ifstream file(filename.data());
+            if (!file.is_open())
+            {
+                throw std::runtime_error("Cannot open file: " + std::string(filename));
+            }
+
+            std::string line;
+            if (!std::getline(file, line))
+            {
+                throw std::runtime_error("Empty file or missing header: " + std::string(filename));
+            }
+
+            // Parse header
+            std::vector<std::string> new_col_names;
+            auto fields = std::views::split(line, ',') |
+                          std::views::transform([](auto&& rng)
+                                                {
+                                                    std::string s(rng.begin(), rng.end());
+                                                    if (!s.empty() && s.front() == '"' && s.back() == '"')
+                                                    {
+                                                        s = s.substr(1, s.size() - 2);
+                                                    }
+                                                    return s;
+                                                });
+            for (const auto& field : fields)
+            {
+                new_col_names.push_back(field);
+            }
+
+            // If table is empty, initialize with new headers
+            if (col_names.empty())
+            {
+                col_names = new_col_names;
+                for (size_t i = 0; i < col_names.size(); ++i)
+                {
+                    col_map[col_names[i]] = i;
+                }
+            }
+            // Otherwise, verify headers match
+            else
+            {
+                if (new_col_names.size() != col_names.size() ||
+                    !std::equal(new_col_names.begin(), new_col_names.end(), col_names.begin()))
+                {
+                    throw std::runtime_error("Column headers in " + std::string(filename) + " do not match existing table");
+                }
+            }
+
+            // Read and append rows
+            while (std::getline(file, line))
+            {
+                std::vector<CellValue> row;
+                auto fields = std::views::split(line, ',') |
+                              std::views::transform([](auto&& rng)
+                                                    {
+                                                        std::string s(rng.begin(), rng.end());
+                                                        if (!s.empty() && s.front() == '"' && s.back() == '"')
+                                                        {
+                                                            s = s.substr(1, s.size() - 2);
+                                                        }
+                                                        return parse_cell(s);
+                                                    });
+                row.assign(fields.begin(), fields.end());
+                while (row.size() < col_names.size())
+                {
+                    row.emplace_back(std::string(""));
+                }
+                rows.push_back(std::move(row));
+            }
+        }
+    
 
         /**
          * @brief Sets the type of a column, converting values if possible.
@@ -690,8 +823,8 @@ namespace m2
 
             std::ranges::sort(rows, [this, col_index, ascending](const auto &a, const auto &b)
                               {
-                                  T val_a = convert_cell<T>(a[col_index], T());
-                                  T val_b = convert_cell<T>(b[col_index], T());
+                                  T val_a = convert_cell<T>(a[col_index]);
+                                  T val_b = convert_cell<T>(b[col_index]);
                                   return ascending ? (val_a < val_b) : (val_a > val_b); });
         }
 
@@ -1019,19 +1152,21 @@ namespace m2
                 throw std::runtime_error("Cannot open file for writing: " + std::string(filename));
             }
 
+            // Write headers without quotes
             for (size_t i : std::views::iota(0u, col_names.size()))
             {
-                file << "\"" << col_names[i] << "\"";
+                file << col_names[i];
                 if (i < col_names.size() - 1)
                     file << ",";
             }
             file << "\n";
 
+            // Write rows without quotes
             for (const auto &row : rows)
             {
                 for (size_t i : std::views::iota(0u, row.size()))
                 {
-                    file << "\"" << cell_to_string(row[i]) << "\"";
+                    file << cell_to_string(row[i]);
                     if (i < row.size() - 1)
                         file << ",";
                 }
@@ -1077,6 +1212,35 @@ namespace m2
         }
 
         /**
+         * @brief Deletes a row from the table by its index.
+         *
+         * This function removes the row at the specified index from the table.
+         * If the index is out of range, it throws a std::out_of_range exception.
+         *
+         * @param index The zero-based index of the row to delete.
+         * @throws std::out_of_range If the index is greater than or equal to the number of rows.
+         */
+        void delete_row(size_t index) {
+            if (index < rows.size()) {
+                rows.erase(rows.begin() + index);
+            } else {
+                throw std::out_of_range("Index out of range");
+            }
+        }
+
+        /**
+         * @brief Removes rows from the table that satisfy a given condition.
+         *
+         * This function removes all rows from the table for which the provided condition function returns true.
+         * The condition function should take a const reference to a row (std::vector<CellValue>) and return a boolean.
+         *
+         * @param condition A function that takes a row and returns true if the row should be removed.
+         */
+        void remove_rows(std::function<bool(const std::vector<CellValue>&)> condition) {
+            rows.erase(std::remove_if(rows.begin(), rows.end(), condition), rows.end());
+        }
+
+        /**
          * @brief Gets the column names of the table.
          * @return const std::vector<std::string>& A reference to the column names.
          */
@@ -1085,7 +1249,44 @@ namespace m2
             return col_names;
         }
 
+        /**
+         * @brief Gets the number of rows in the table.
+         * @return size_t The number of rows.
+         */
+        size_t num_rows() const
+        {
+            return rows.size();
+        }
 
+        /**
+         * @brief Appends the rows of another CSVTable to this table.
+         * 
+         * If this table is empty, it adopts the columns and rows of the other table.
+         * If the other table is empty, no changes are made.
+         * If both tables are non-empty, the columns must match exactly (same names and order).
+         * 
+         * @param other The CSVTable to append to this table.
+         * @throws std::invalid_argument If the columns do not match when both tables are non-empty.
+         */
+        void append_table(const CSVTable& other) {
+            if (other.col_names.empty()) {
+                // Do nothing if the other table is empty
+                return;
+            }
+            if (col_names.empty()) {
+                // If this table is empty, set columns and rows from the other table
+                col_names = other.col_names;
+                col_map = other.col_map;
+                rows = other.rows;
+            } else {
+                // Check if columns match exactly
+                if (col_names != other.col_names) {
+                    throw std::invalid_argument("Columns do not match for appending");
+                }
+                // Append rows from the other table
+                rows.insert(rows.end(), other.rows.begin(), other.rows.end());
+            }
+        }
 
     private:
         std::vector<std::string> col_names;

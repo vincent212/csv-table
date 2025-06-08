@@ -46,7 +46,7 @@ m2::CSVTable create_example_table() {
 void example1() {
     try {
         m2::CSVTable table = create_example_table();
-        for (size_t row = 0; row < table.get_rows().size(); ++row) {
+        for (size_t row = 0; row < table.num_rows(); ++row) {
             std::cout << "Row " << row << ":\n";
             for (const auto& col : table.get_col_names()) {
                 try {
@@ -71,7 +71,7 @@ void example2() {
         try {
             // Check if column exists by attempting to access it
             table.get<int>(0, column_name);
-            for (size_t row = 0; row < table.get_rows().size(); ++row) {
+            for (size_t row = 0; row < table.num_rows(); ++row) {
                 try {
                     int age = table.get<int>(row, column_name);
                     std::cout << "Row " << row << ", Age: " << age << "\n";
@@ -93,7 +93,7 @@ void example3() {
     try {
         m2::CSVTable table = create_example_table();
         size_t row_index = 0;
-        for (const auto& row : table.get_rows()) {
+        for (const auto& row : table) {
             std::cout << "Row " << row_index++ << ":\n";
             for (const auto& cell : row) {
                 std::cout << "  " << m2::CSVTable::cell_to_string(cell) << "\n";
@@ -109,7 +109,7 @@ void example3() {
 void example4() {
     try {
         m2::CSVTable table = create_example_table();
-        for (size_t row = 0; row < table.get_rows().size(); ++row) {
+        for (size_t row = 0; row < table.num_rows(); ++row) {
             try {
                 // Increment the "Score" value by 1.0
                 double current_score = table.get<double>(row, "Score");
@@ -119,9 +119,34 @@ void example4() {
                 std::cout << "Error updating row " << row << ": " << e.what() << "\n";
             }
         }
-        table.save_to_file("updated_example.csv"); // Save modified table
+        table.save_to_file("_example_.csv"); // Save modified table
     } catch (const std::exception& e) {
         std::cerr << "Error in example4: " << e.what() << "\n";
+    }
+}
+
+// Example 5: using the visit function to print cell values
+void example5()
+{
+    m2::CSVTable table_msg;
+    table_msg.read_file("input.csv"); // Assuming example.csv is a valid CSV file
+    auto col_names = table_msg.get_col_names();
+    // Print column names
+    for (const auto &name : col_names)
+    {
+        std::cout << name << " ";
+    }
+    std::cout << std::endl;
+
+    // Print each row's cell values using std::visit
+    for (const auto &row : table_msg)
+    {
+        for (const auto &cell : row)
+        {
+            std::visit([](const auto &value)
+                       { std::cout << value << " "; }, cell);
+        }
+        std::cout << std::endl;
     }
 }
 
@@ -135,5 +160,7 @@ int main() {
     example3();
     std::cout << "Running example4()...\n";
     example4();
+    std::cout << "Running example5()...\n";
+    example5();
     return 0;
 }
