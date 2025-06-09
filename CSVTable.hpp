@@ -357,13 +357,145 @@ namespace m2
             : col_names(column_names), col_map(column_map), rows(selected_rows) {}
 
 
+        /**
+         * @brief A proxy class for accessing and modifying a cell value in a Row.
+         *
+         * Allows reading and writing a cell value by reference, supporting type-safe
+         * assignments to the cell in the parent CSVTable.
+         */
+        class CellAccess {
+        public:
+            /**
+             * @brief Constructs a CellAccess for a specific cell.
+             * @param table Pointer to the parent CSVTable.
+             * @param row_index The index of the row.
+             * @param col_index The index of the column.
+             */
+            CellAccess(CSVTable* table, size_t row_index, int col_index)
+                : table_(table), row_index_(row_index), col_index_(col_index) {}
+
+            /**
+             * @brief Reads the cell value.
+             * @return CellValue The current value of the cell.
+             * @throws std::out_of_range If the row or column index is invalid.
+             */
+            operator CellValue() const {
+                if (row_index_ >= table_->rows.size()) {
+                    throw std::out_of_range("Row index out of range: " + std::to_string(row_index_));
+                }
+                if (col_index_ >= static_cast<int>(table_->rows[row_index_].size())) {
+                    throw std::out_of_range("Column index out of range: " + std::to_string(col_index_));
+                }
+                return table_->rows[row_index_][col_index_];
+            }
+
+            /**
+             * @brief Assigns a new value to the cell.
+             * @tparam T The type of the value to assign (must be convertible to CellValue).
+             * @param value The value to set.
+             * @return CellAccess& Reference to this access object for chaining.
+             * @throws std::out_of_range If the row or column index is invalid.
+             */
+            template <ConvertibleToCellValue T>
+            CellAccess& operator=(const T& value) {
+                if (row_index_ >= table_->rows.size()) {
+                    throw std::out_of_range("Row index out of range: " + std::to_string(row_index_));
+                }
+                if (col_index_ >= static_cast<int>(table_->rows[row_index_].size())) {
+                    throw std::out_of_range("Column index out of range: " + std::to_string(col_index_));
+                }
+                table_->rows[row_index_][col_index_] = value;
+                return *this;
+            }
+
+        private:
+            CSVTable* table_;      ///< Pointer to the parent table
+            size_t row_index_;     ///< Index of the row
+            int col_index_;        ///< Index of the column
+        };
+
+        /**
+         * @brief A class representing a single row in a CSVTable.
+         *
+         * Allows access to cell values by column name using operator[], supporting both
+         * reading and writing. Provides type-safe retrieval of values via get<T>.
+         */
+        class Row {
+        public:
+            /**
+             * @brief Constructs a Row object.
+             * @param table Pointer to the parent CSVTable.
+             * @param row_index The index of the row in the table.
+             */
+            Row(CSVTable* table, size_t row_index)
+                : table_(table), row_index_(row_index) {}
+
+            /**
+             * @brief Accesses a cell for reading or writing by column name.
+             * @param col_name The name of the column.
+             * @return CellAccess An access object for the cell, allowing read/write operations.
+             * @throws std::invalid_argument If the column name does not exist.
+             */
+            CellAccess operator[](std::string_view col_name) {
+                auto it = table_->col_map.find(col_name);
+                if (it == table_->col_map.end()) {
+                    throw std::invalid_argument("Column not found: " + std::string(col_name));
+                }
+                return CellAccess(table_, row_index_, it->second);
+            }
+
+            /**
+             * @brief Retrieves a cell value with type safety.
+             * @tparam T The type to retrieve (must be convertible to CellValue).
+             * @param col_name The name of the column.
+             * @return T The value converted to type T.
+             * @throws std::invalid_argument If the column name does not exist.
+             * @throws std::out_of_range If the row index is invalid.
+             * @throws std::runtime_error If the value cannot be converted to T.
+             */
+            template <ConvertibleToCellValue T>
+            T get(std::string_view col_name) const {
+                return table_->get<T>(static_cast<int>(row_index_), col_name);
+            }
+
+            /**
+             * @brief Streams the row to an output stream.
+             *
+             * Outputs the row as a comma-separated list of cell values, using the table's
+             * cell_to_string function to convert values to strings.
+             *
+             * @param os The output stream to write to.
+             * @param row The Row object to stream.
+             * @return std::ostream& The output stream for chaining.
+             * @throws std::out_of_range If the row index is invalid.
+             */
+            friend std::ostream& operator<<(std::ostream& os, const Row& row) {
+                if (row.row_index_ >= row.table_->rows.size()) {
+                    os << "<Invalid Row>";
+                    return os;
+                }
+                const auto& row_data = row.table_->rows[row.row_index_];
+                for (size_t i = 0; i < row_data.size(); ++i) {
+                    os << CSVTable::cell_to_string(row_data[i]);
+                    if (i < row_data.size() - 1) {
+                        os << ",";
+                    }
+                }
+                return os;
+            }
+
+        private:
+            CSVTable* table_;      ///< Pointer to the parent table
+            size_t row_index_;     ///< Index of the row
+        };
+
         // Nested iterator class for rows
         class RowIterator {
         public:
             RowIterator(CSVTable* table, size_t index) : table_(table), index_(index) {}
 
-            std::vector<CellValue>& operator*() const {
-                return table_->rows[index_];
+            Row operator*() const {
+                return Row(table_, index_);
             }
 
             RowIterator& operator++() {
@@ -383,6 +515,10 @@ namespace m2
                 return index_;
             }
 
+            Row row() const {
+                return Row(table_, index_);
+            }
+
         private:
             CSVTable* table_;
             size_t index_;
@@ -393,8 +529,8 @@ namespace m2
         public:
             ConstRowIterator(const CSVTable* table, size_t index) : table_(table), index_(index) {}
 
-            const std::vector<CellValue>& operator*() const {
-                return table_->rows[index_];
+            Row operator*() const {
+                return Row(const_cast<CSVTable*>(table_), index_);
             }
 
             ConstRowIterator& operator++() {
@@ -412,6 +548,10 @@ namespace m2
 
             size_t index() const {
                 return index_;
+            }
+
+            Row row() const {
+                return Row(const_cast<CSVTable*>(table_), index_);
             }
 
         private:
@@ -1443,6 +1583,285 @@ namespace m2
             return column_values;
         }
 
+        /**
+         * @brief Keeps every nth row in the table, removing all others.
+         *
+         * This function modifies the table in-place by retaining only the rows whose
+         * zero-based indices are multiples of n (e.g., for n=2, keeps rows 0, 2, 4, etc.).
+         * If n is 0, the table is cleared. If n is 1, all rows are kept (no change).
+         *
+         * @param n The interval at which to keep rows (must be non-negative).
+         * @throws std::invalid_argument If n is negative.
+         */
+        void keep_every_nth_row(int n) {
+            if (n < 0) {
+                throw std::invalid_argument("n must be non-negative");
+            }
+            if (n == 0) {
+                rows.clear();
+                return;
+            }
+            if (n == 1) {
+                return; // No change needed
+            }
+
+            std::vector<std::vector<CellValue>> new_rows;
+            new_rows.reserve((rows.size() + n - 1) / n); // Reserve space for efficiency
+            for (size_t i = 0; i < rows.size(); i += n) {
+                new_rows.push_back(std::move(rows[i]));
+            }
+            rows = std::move(new_rows);
+        }
+
+    /**
+    * @brief Calculates the mean of a column, assuming double values.
+    *
+    * Computes the arithmetic mean of all values in the specified column. The column
+    * must contain values convertible to double.
+    *
+    * @param col_name The name of the column to compute the mean for.
+    * @return double The mean value of the column.
+    * @throws std::invalid_argument If the column does not exist or is empty.
+    * @throws std::runtime_error If any value cannot be converted to double.
+    */
+    double mean(std::string_view col_name) const {
+        auto column = get_column_as<double>(col_name);
+        if (column.empty()) {
+            throw std::invalid_argument("Cannot compute mean of empty column: " + std::string(col_name));
+        }
+        double sum = 0.0;
+        for (double val : column) {
+            sum += val;
+        }
+        return sum / column.size();
+    }
+
+    /**
+     * @brief Calculates the median of a column, assuming double values.
+     *
+     * Computes the median of all values in the specified column by sorting the values
+     * and finding the middle value (or average of two middle values for even-sized columns).
+     * The column must contain values convertible to double.
+     *
+     * @param col_name The name of the column to compute the median for.
+     * @return double The median value of the column.
+     * @throws std::invalid_argument If the column does not exist or is empty.
+     * @throws std::runtime_error If any value cannot be converted to double.
+     */
+    double median(std::string_view col_name) const {
+        auto column = get_column_as<double>(col_name);
+        if (column.empty()) {
+            throw std::invalid_argument("Cannot compute median of empty column: " + std::string(col_name));
+        }
+        std::sort(column.begin(), column.end());
+        size_t n = column.size();
+        if (n % 2 == 0) {
+            return (column[n / 2 - 1] + column[n / 2]) / 2.0;
+        } else {
+            return column[n / 2];
+        }
+    }
+
+    /**
+     * @brief Calculates the standard deviation of a column, assuming double values.
+     *
+     * Computes the sample standard deviation of all values in the specified column.
+     * The column must contain values convertible to double.
+     *
+     * @param col_name The name of the column to compute the standard deviation for.
+     * @return double The standard deviation of the column.
+     * @throws std::invalid_argument If the column does not exist or has fewer than 2 values.
+     * @throws std::runtime_error If any value cannot be converted to double.
+     */
+    double standard_deviation(std::string_view col_name) const {
+        auto column = get_column_as<double>(col_name);
+        if (column.size() < 2) {
+            throw std::invalid_argument("Cannot compute standard deviation with fewer than 2 values in column: " + std::string(col_name));
+        }
+        double m = mean(col_name);
+        double sum_sq_diff = 0.0;
+        for (double val : column) {
+            double diff = val - m;
+            sum_sq_diff += diff * diff;
+        }
+        return std::sqrt(sum_sq_diff / (column.size() - 1));
+    }
+
+    /**
+     * @brief Calculates the Pearson correlation coefficient between two columns.
+     *
+     * Computes the correlation between two specified columns, assuming both contain
+     * values convertible to double. The coefficient ranges from -1 to 1, indicating
+     * the strength and direction of the linear relationship.
+     *
+     * @param col_name1 The name of the first column.
+     * @param col_name2 The name of the second column.
+     * @return double The Pearson correlation coefficient.
+     * @throws std::invalid_argument If either column does not exist, is empty, or columns have different sizes.
+     * @throws std::runtime_error If any value cannot be converted to double or if the standard deviation of either column is zero.
+     */
+    double correlation(std::string_view col_name1, std::string_view col_name2) const {
+        auto col1 = get_column_as<double>(col_name1);
+        auto col2 = get_column_as<double>(col_name2);
+        if (col1.empty()) {
+            throw std::invalid_argument("Cannot compute correlation with empty column: " + std::string(col_name1));
+        }
+        if (col1.size() != col2.size()) {
+            throw std::invalid_argument("Columns must have the same number of rows for correlation");
+        }
+        double mean1 = mean(col_name1);
+        double mean2 = mean(col_name2);
+        double std1 = standard_deviation(col_name1);
+        double std2 = standard_deviation(col_name2);
+        if (std1 == 0.0 || std2 == 0.0) {
+            throw std::runtime_error("Cannot compute correlation with zero standard deviation");
+        }
+        double cov = 0.0;
+        for (size_t i = 0; i < col1.size(); ++i) {
+            cov += (col1[i] - mean1) * (col2[i] - mean2);
+        }
+        cov /= col1.size() - 1;
+        return cov / (std1 * std2);
+    }
+
+    /**
+     * @brief Calculates the R-squared (coefficient of determination) between two columns.
+     *
+     * Computes the R-squared value to measure the proportion of variance in the dependent
+     * column (col_name2) explained by the independent column (col_name1). Both columns
+     * must contain values convertible to double.
+     *
+     * @param col_name1 The name of the independent (predictor) column.
+     * @param col_name2 The name of the dependent (actual) column.
+     * @return double The R-squared value, typically between 0 and 1.
+     * @throws std::invalid_argument If either column does not exist, is empty, or columns have different sizes.
+     * @throws std::runtime_error If any value cannot be converted to double or if the variance of the dependent column is zero.
+     */
+    double r_squared(std::string_view col_name1, std::string_view col_name2) const {
+        auto col1 = get_column_as<double>(col_name1); // Predicted values
+        auto col2 = get_column_as<double>(col_name2); // Actual values
+        if (col1.empty()) {
+            throw std::invalid_argument("Cannot compute R-squared with empty column: " + std::string(col_name1));
+        }
+        if (col1.size() != col2.size()) {
+            throw std::invalid_argument("Columns must have the same number of rows for R-squared");
+        }
+        double mean_y = mean(col_name2);
+        double ss_tot = 0.0; // Total sum of squares
+        double ss_res = 0.0; // Residual sum of squares
+        for (size_t i = 0; i < col1.size(); ++i) {
+            double y = col2[i]; // Actual
+            double y_pred = col1[i]; // Predicted
+            ss_tot += (y - mean_y) * (y - mean_y);
+            ss_res += (y - y_pred) * (y - y_pred);
+        }
+        if (ss_tot == 0.0) {
+            throw std::runtime_error("Cannot compute R-squared with zero total variance in column: " + std::string(col_name2));
+        }
+        return 1.0 - (ss_res / ss_tot);
+    }
+
+    /**
+     * @brief Calculates the Root Mean Squared Error (RMSE) between two columns.
+     *
+     * Computes the RMSE to measure the average magnitude of errors between predicted
+     * values in col_name1 and actual values in col_name2. Both columns must contain
+     * values convertible to double.
+     *
+     * @param col_name1 The name of the predicted column.
+     * @param col_name2 The name of the actual column.
+     * @return double The RMSE value.
+     * @throws std::invalid_argument If either column does not exist, is empty, or columns have different sizes.
+     * @throws std::runtime_error If any value cannot be converted to double.
+     */
+    double rmse(std::string_view col_name1, std::string_view col_name2) const {
+        auto col1 = get_column_as<double>(col_name1); // Predicted values
+        auto col2 = get_column_as<double>(col_name2); // Actual values
+        if (col1.empty()) {
+            throw std::invalid_argument("Cannot compute RMSE with empty column: " + std::string(col_name1));
+        }
+        if (col1.size() != col2.size()) {
+            throw std::invalid_argument("Columns must have the same number of rows for RMSE");
+        }
+        double sum_sq_error = 0.0;
+        for (size_t i = 0; i < col1.size(); ++i) {
+            double error = col1[i] - col2[i];
+            sum_sq_error += error * error;
+        }
+        return std::sqrt(sum_sq_error / col1.size());
+    }
+
+    /**
+     * @brief Calculates the squared error of a column, assuming a mean of zero.
+     *
+     * Computes the sum of squared values in the specified column, assuming the mean is zero
+     * (i.e., no mean subtraction). The column must contain values convertible to double.
+     *
+     * @param col_name The name of the column to compute the squared error for.
+     * @return double The sum of squared values in the column.
+     * @throws std::invalid_argument If the column does not exist or is empty.
+     * @throws std::runtime_error If any value cannot be converted to double.
+     */
+    double squared_error(std::string_view col_name) const {
+        auto column = get_column_as<double>(col_name);
+        if (column.empty()) {
+            throw std::invalid_argument("Cannot compute squared error of empty column: " + std::string(col_name));
+        }
+        double sum_sq = 0.0;
+        for (double val : column) {
+            sum_sq += val * val;
+        }
+        return sum_sq;
+    }
+
+    /**
+     * @brief Calculates the specified percentile of a column, assuming double values.
+     *
+     * Computes the percentile (e.g., 0.25 for 25th percentile) of the values in the specified
+     * column. The column must contain values convertible to double. Linear interpolation is used
+     * if the percentile falls between two values.
+     *
+     * @param col_name The name of the column to compute the percentile for.
+     * @param p The percentile to compute, in the range [0, 1] (e.g., 0.25 for 25th percentile).
+     * @return double The value at the specified percentile.
+     * @throws std::invalid_argument If the column does not exist, is empty, or p is not in [0, 1].
+     * @throws std::runtime_error If any value cannot be converted to double.
+     */
+    double percentile(std::string_view col_name, double p) const {
+        if (p < 0.0 || p > 1.0) {
+            throw std::invalid_argument("Percentile p must be in [0, 1], got: " + std::to_string(p));
+        }
+        auto column = get_column_as<double>(col_name);
+        if (column.empty()) {
+            throw std::invalid_argument("Cannot compute percentile of empty column: " + std::string(col_name));
+        }
+        std::sort(column.begin(), column.end());
+        size_t n = column.size();
+        double index = p * (n - 1);
+        size_t lower_idx = static_cast<size_t>(std::floor(index));
+        if (lower_idx == n - 1) {
+            return column[n - 1];
+        }
+        double fraction = index - lower_idx;
+        return column[lower_idx] + fraction * (column[lower_idx + 1] - column[lower_idx]);
+    }
+
+    /**
+     * @brief Retrieves a Row object for the specified row index.
+     *
+     * Returns a Row object that allows access to the row's values by column name.
+     *
+     * @param index The zero-based index of the row.
+     * @return Row A Row object representing the specified row.
+     * @throws std::out_of_range If the index is out of range.
+     */
+    Row get_row(size_t index)  {
+        if (index >= rows.size()) {
+            throw std::out_of_range("Row index out of range: " + std::to_string(index));
+        }
+        return Row(this, index);
+    }
+    
     private:
         std::vector<std::string> col_names;
         std::map<std::string, int, std::less<>> col_map;

@@ -95,9 +95,7 @@ void example3() {
         size_t row_index = 0;
         for (const auto& row : table) {
             std::cout << "Row " << row_index++ << ":\n";
-            for (const auto& cell : row) {
-                std::cout << "  " << m2::CSVTable::cell_to_string(cell) << "\n";
-            }
+            std::cout << row << std::endl;
         }
     } catch (const std::exception& e) {
         std::cerr << "Error in example3: " << e.what() << "\n";
@@ -125,30 +123,6 @@ void example4() {
     }
 }
 
-// Example 5: using the visit function to print cell values
-void example5()
-{
-    m2::CSVTable table_msg;
-    table_msg.read_file("input.csv"); // Assuming example.csv is a valid CSV file
-    auto col_names = table_msg.get_col_names();
-    // Print column names
-    for (const auto &name : col_names)
-    {
-        std::cout << name << " ";
-    }
-    std::cout << std::endl;
-
-    // Print each row's cell values using std::visit
-    for (const auto &row : table_msg)
-    {
-        for (const auto &cell : row)
-        {
-            std::visit([](const auto &value)
-                       { std::cout << value << " "; }, cell);
-        }
-        std::cout << std::endl;
-    }
-}
 
 // Main function to run the examples
 int main() {
@@ -160,7 +134,5 @@ int main() {
     example3();
     std::cout << "Running example4()...\n";
     example4();
-    std::cout << "Running example5()...\n";
-    example5();
     return 0;
 }

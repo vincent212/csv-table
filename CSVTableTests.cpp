@@ -461,15 +461,15 @@ TEST_F(CSVTableTest, LowerBound) {
     auto it1 = table.lower_bound<int>("age", 30);
     ASSERT_NE(it1, const_table.end()) << "Iterator should not be at end for exact match";
     const auto& row1 = *it1;
-    EXPECT_EQ(std::get<std::string>(row1[0]), "Bob") << "Name should be Bob";
-    EXPECT_EQ(std::get<int>(row1[1]), 30) << "Age should be 30";
+    EXPECT_EQ(row1.get<std::string>("name"), "Bob") << "Name should be Bob";
+    EXPECT_EQ(row1.get<int>("age"), 30) << "Age should be 30";
 
     // Test 2: No exact match, find first greater
     auto it2 = table.lower_bound<int>("age", 32);
     ASSERT_NE(it2, const_table.end()) << "Iterator should point to first greater value";
     const auto& row2 = *it2;
-    EXPECT_EQ(std::get<std::string>(row2[0]), "Charlie") << "Name should be Charlie";
-    EXPECT_EQ(std::get<int>(row2[1]), 35) << "Age should be 35";
+    EXPECT_EQ(row2.get<std::string>("name"), "Charlie") << "Name should be Charlie";
+    EXPECT_EQ(row2.get<int>("age"), 35) << "Age should be 35";
 
     // Test 3: All values less than the search value
     auto it3 = table.lower_bound<int>("age", 45);
@@ -500,8 +500,8 @@ TEST_F(CSVTableTest, FindIntegerExisting) {
     auto it = table.find<int>("id", 3);
     ASSERT_NE(it, const_table.end()) << "Iterator should not be at end for exact match";
     const auto& row = *it;
-    EXPECT_EQ(std::get<int>(row[0]), 3);
-    EXPECT_EQ(std::get<std::string>(row[1]), "Charlie");
+    EXPECT_EQ(row.get<int>("id"), 3);
+    EXPECT_EQ(row.get<std::string>("name"), "Charlie");
 }
 
 // Test finding a non-existing integer value
@@ -560,8 +560,8 @@ TEST_F(CSVTableTest, FindStringExisting) {
     auto it = table.find<std::string>("name", "Charlie");
     ASSERT_NE(it, const_table.end()) << "Iterator should not be at end for exact match";
     const auto& row = *it;
-    EXPECT_EQ(std::get<std::string>(row[0]), "Charlie");
-    EXPECT_EQ(std::get<int>(row[1]), 35);
+    EXPECT_EQ(row.get<std::string>("name"), "Charlie");
+    EXPECT_EQ(row.get<int>("age"), 35);
 }
 
 // Test finding a non-existing string value
@@ -593,6 +593,81 @@ TEST_F(CSVTableTest, FindNonExistentColumn) {
     table.add_column<int>("id");
     add_row(table, {1});
     EXPECT_THROW(table.find<int>("nonexistent", 1), std::invalid_argument) << "Should throw invalid_argument for non-existent column";
+}
+
+
+// Test fixture for CSVTable tests
+class CSVTableTest2 : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // Create a temporary CSV file for testing
+        std::ofstream file("test.csv");
+        file << "Name,Age,Score,ID\n";
+        file << "Alice,25,90.5,123456789012345\n";
+        file << "Bob,30,85.0,987654321098765\n";
+        file.close();
+    }
+
+    void TearDown() override {
+        // Clean up temporary file
+        std::filesystem::remove("test.csv");
+    }
+};
+
+// Test case for assignment and access via Row
+TEST_F(CSVTableTest2, RowAssignmentAndAccess) {
+    CSVTable table("test.csv");
+
+    // Test 1: Read access via Row
+    {
+        auto row = table.get_row(0);
+        EXPECT_EQ(row.get<std::string>("Name"), "Alice") << "Row read: Name value";
+        EXPECT_EQ(row.get<int>("Age"), 25) << "Row read: Age value";
+        EXPECT_EQ(row.get<double>("Score"), 90.5) << "Row read: Score value";
+        EXPECT_EQ(row.get<uint64_t>("ID"), 123456789012345ULL) << "Row read: ID value";
+    }
+
+    // Test 2: Write access via Row
+    {
+        auto row = table.get_row(0);
+        row["Name"] = std::string("Charlie");
+        row["Age"] = 35;
+        row["Score"] = 95.0;
+        row["ID"] = uint64_t(111222333444555ULL);
+        // Verify changes in table
+        EXPECT_EQ(table.get<std::string>(0, "Name"), "Charlie") << "Row write: Name updated";
+        EXPECT_EQ(table.get<int>(0, "Age"), 35) << "Row write: Age updated";
+        EXPECT_EQ(table.get<double>(0, "Score"), 95.0) << "Row write: Score updated";
+        EXPECT_EQ(table.get<uint64_t>(0, "ID"), 111222333444555ULL) << "Row write: ID updated";
+        // Verify other row is unchanged
+        EXPECT_EQ(table.get<std::string>(1, "Name"), "Bob") << "Row write: Other row Name unchanged";
+    }
+
+    // Test 3: Write access via iterator
+    {
+        for (auto it = table.begin(); it != table.end(); ++it) {
+            auto row = it.row();
+            if (it.index() == 1) {
+                row["Age"] = 40;
+                row["Score"] = 88.5;
+            }
+        }
+        EXPECT_EQ(table.get<int>(1, "Age"), 40) << "Iterator write: Age updated";
+        EXPECT_EQ(table.get<double>(1, "Score"), 88.5) << "Iterator write: Score updated";
+        EXPECT_EQ(table.get<std::string>(0, "Name"), "Charlie") << "Iterator write: Other row Name unchanged";
+    }
+
+    // Test 4: Invalid column access
+    {
+        auto row = table.get_row(0);
+        EXPECT_THROW(row["Invalid"], std::invalid_argument) << "Row access: Invalid column name";
+        EXPECT_THROW(row.get<int>("Invalid"), std::invalid_argument) << "Row get: Invalid column name";
+    }
+
+    // Test 5: Invalid row index
+    {
+        EXPECT_THROW(table.get_row(table.num_rows()), std::out_of_range) << "Row access: Out-of-range index";
+    }
 }
 
 
