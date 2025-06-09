@@ -379,6 +379,10 @@ namespace m2
                 return index_ == other.index_;
             }
 
+            size_t index() const {
+                return index_;
+            }
+
         private:
             CSVTable* table_;
             size_t index_;
@@ -404,6 +408,10 @@ namespace m2
 
             bool operator==(const ConstRowIterator& other) const {
                 return index_ == other.index_;
+            }
+
+            size_t index() const {
+                return index_;
             }
 
         private:
@@ -1404,6 +1412,35 @@ namespace m2
             for (auto &row : rows) {
                 row[col_index] = value;
             }
+        }
+
+        /**
+        * @brief Returns a column as a vector of the specified type.
+        * 
+        * This function retrieves all values from the specified column and converts them
+        * to the type T. The function assumes that all values in the column can be 
+        * successfully converted to T. If the column does not exist, it throws a 
+        * std::invalid_argument exception.
+        * 
+        * @tparam T The type to which the column values should be converted.
+        * @param col_name The name of the column to retrieve.
+        * @return std::vector<T> A vector containing the column values converted to type T.
+        * @throws std::invalid_argument If the column does not exist.
+        * @throws std::runtime_error If a value cannot be converted to type T.
+        */
+        template <ConvertibleToCellValue T>
+        std::vector<T> get_column_as(std::string_view col_name) const {
+            auto it = col_map.find(col_name);
+            if (it == col_map.end()) {
+                throw std::invalid_argument("Column not found: " + std::string(col_name));
+            }
+            int col_index = it->second;
+            std::vector<T> column_values;
+            column_values.reserve(rows.size());  // Reserve space for efficiency
+            for (const auto& row : rows) {
+                column_values.push_back(convert_cell<T>(row[col_index]));
+            }
+            return column_values;
         }
 
     private:

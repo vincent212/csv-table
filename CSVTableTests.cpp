@@ -110,23 +110,28 @@ TEST_F(CSVTableTest, GetValue) {
     EXPECT_THROW(table.get<bool>(0, "Name"), std::runtime_error) << "Get: Type mismatch";
 }
 
-// Test 4: Add column
 TEST_F(CSVTableTest, AddColumn) {
     CSVTable table("test.csv");
     table.add_column("NewID", uint64_t(1000));
     EXPECT_EQ(table.get_rows()[0].size(), 5) << "Add column: Column count";
+    EXPECT_EQ(table.get<std::string>(0, "Name"), "Alice") << "Add column: Name still accessible";
+    EXPECT_EQ(table.get<int>(0, "Age"), 25) << "Add column: Age still accessible";
+    EXPECT_EQ(table.get<double>(0, "Score"), 90.5) << "Add column: Score still accessible";
+    EXPECT_EQ(table.get<uint64_t>(0, "ID"), 123456789012345ULL) << "Add column: ID still accessible";
     EXPECT_EQ(table.get<uint64_t>(0, "NewID"), 1000ULL) << "Add column: Default value";
 
     // Test failure: Duplicate column
     EXPECT_THROW(table.add_column("NewID", uint64_t(2000)), std::invalid_argument) << "Add column: Duplicate column";
 }
 
-// Test 5: Delete column
 TEST_F(CSVTableTest, DeleteColumn) {
     CSVTable table("test.csv");
     table.delete_column("Age");
     EXPECT_EQ(table.get_rows()[0].size(), 3) << "Delete column: Column count";
-    EXPECT_EQ(table.get<std::string>(0, "Name"), "Alice") << "Delete column: Remaining value";
+    EXPECT_EQ(table.get<std::string>(0, "Name"), "Alice") << "Delete column: Name still accessible";
+    EXPECT_EQ(table.get<double>(0, "Score"), 90.5) << "Delete column: Score still accessible";
+    EXPECT_EQ(table.get<uint64_t>(0, "ID"), 123456789012345ULL) << "Delete column: ID still accessible";
+    EXPECT_THROW(table.get<int>(0, "Age"), std::invalid_argument) << "Delete column: Age no longer accessible";
 
     // Test failure: Invalid column
     EXPECT_THROW(table.delete_column("Invalid"), std::invalid_argument) << "Delete column: Invalid column";
