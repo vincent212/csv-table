@@ -498,6 +498,10 @@ namespace m2
                 return Row(table_, index_);
             }
 
+            Row operator->() const {
+                return Row(table_, index_);
+            }
+
             RowIterator& operator++() {
                 ++index_;
                 return *this;
@@ -530,6 +534,10 @@ namespace m2
             ConstRowIterator(const CSVTable* table, size_t index) : table_(table), index_(index) {}
 
             Row operator*() const {
+                return Row(const_cast<CSVTable*>(table_), index_);
+            }
+
+            Row operator->() const {
                 return Row(const_cast<CSVTable*>(table_), index_);
             }
 

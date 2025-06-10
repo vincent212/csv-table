@@ -123,6 +123,25 @@ void example4() {
     }
 }
 
+void example5()
+{
+    m2::CSVTable table = create_example_table();
+    std::cout << "Original Table:\n"
+              << table << "\n";
+    try
+    {
+        for (auto row : table)
+        {
+            row["Score"] = row.get<double>("Score") + 1.0; // Increment Score by 1.0
+        }
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Exception in example5: " << e.what() << "\n";
+    }
+    std::cout << "Modified Table:\n"
+              << table << "\n";
+}
 
 // Main function to run the examples
 int main() {
@@ -134,5 +153,7 @@ int main() {
     example3();
     std::cout << "Running example4()...\n";
     example4();
+    std::cout << "Running example5()...\n";
+    example5();
     return 0;
 }
