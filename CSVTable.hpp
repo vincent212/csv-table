@@ -848,6 +848,21 @@ namespace m2
         }
 
         /**
+         * @brief Deletes multiple columns from the table.
+         *
+         * Removes the specified columns from the table by calling delete_column for each
+         * column name. All specified columns must exist, or an exception is thrown.
+         *
+         * @param col_names A vector of column names to delete.
+         * @throws std::invalid_argument If any column name does not exist.
+         */
+        void delete_columns(const std::vector<std::string_view>& col_names) {
+            for (const auto& name : col_names) {
+                delete_column(name);
+            }
+        }
+
+        /**
          * @brief Appends a new row to the table.
          * @param values The values for the new row.
          */
@@ -1868,6 +1883,27 @@ namespace m2
             throw std::out_of_range("Row index out of range: " + std::to_string(index));
         }
         return Row(this, index);
+    }
+
+    /**
+     * @brief Removes rows from the table that satisfy a predicate.
+     *
+     * Iterates over the table's rows and removes those for which the provided predicate
+     * returns true. The predicate takes a Row object representing the current row.
+     *
+     * @param predicate A function that takes a Row object and returns true if the row
+     *                  should be removed.
+     */
+    void remove_rows_if(std::function<bool(const Row&)> predicate) {
+        std::vector<std::vector<CellValue>> new_rows;
+        new_rows.reserve(rows.size()); // Reserve space for efficiency
+        for (size_t i = 0; i < rows.size(); ++i) {
+            Row row(this, i);
+            if (!predicate(row)) {
+                new_rows.push_back(std::move(rows[i]));
+            }
+        }
+        rows = std::move(new_rows);
     }
     
     private:
