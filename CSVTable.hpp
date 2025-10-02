@@ -182,8 +182,9 @@ namespace m2
             {
                 size_t pos;
                 int i = std::stoi(std::string(str), &pos);
-                if (pos == str.size())
-                    return i;
+                if (pos != str.size())
+                    throw std::invalid_argument("stoi did not consume entire string");
+                return i;
             }
             catch (...)
             {
@@ -232,7 +233,11 @@ namespace m2
                 }
                 if constexpr (std::is_same_v<T, int>)
                 {
-                    return std::stoi(str);
+                    size_t pos;
+                    int result = std::stoi(str, &pos);
+                    if (pos != str.size())
+                        throw std::invalid_argument("stoi did not consume entire string");
+                    return result;
                 }
                 else if constexpr (std::is_same_v<T, double>)
                 {
@@ -713,7 +718,10 @@ namespace m2
                     {
                         if constexpr (std::is_same_v<T, int>)
                         {
-                            cell = std::stoi(str);
+                            size_t pos;
+                            cell = std::stoi(str, &pos);
+                            if (pos != str.size())
+                                throw std::invalid_argument("stoi did not consume entire string");
                         }
                         else if constexpr (std::is_same_v<T, uint64_t>)
                         {

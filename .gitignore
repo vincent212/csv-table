@@ -8,3 +8,6 @@ examples
 tests
 CMakeFiles/*
 
+*.o
+*.a
+*.P
