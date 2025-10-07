@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <ranges>
@@ -19,9 +20,55 @@
 #include <functional>
 #include <iomanip>
 #include <cmath> // Added for std::floor
+#include <chrono> // For progress reporting
+
+// Apache Arrow and Parquet includes
+#include <arrow/api.h>
+#include <arrow/io/api.h>
+#include <parquet/arrow/reader.h>
+#include <parquet/arrow/writer.h>
+#include <parquet/exception.h>
 
 namespace m2
 {
+    /**
+     * @brief Hash functor that supports heterogeneous lookup for string and string_view.
+     */
+    struct string_hash {
+        using is_transparent = void;
+
+        size_t operator()(const std::string& s) const {
+            return std::hash<std::string>{}(s);
+        }
+
+        size_t operator()(std::string_view sv) const {
+            return std::hash<std::string_view>{}(sv);
+        }
+    };
+
+    /**
+     * @brief Equal functor that supports heterogeneous lookup for string and string_view.
+     */
+    struct string_equal {
+        using is_transparent = void;
+
+        bool operator()(const std::string& lhs, const std::string& rhs) const {
+            return lhs == rhs;
+        }
+
+        bool operator()(const std::string& lhs, std::string_view rhs) const {
+            return lhs == rhs;
+        }
+
+        bool operator()(std::string_view lhs, const std::string& rhs) const {
+            return lhs == rhs;
+        }
+
+        bool operator()(std::string_view lhs, std::string_view rhs) const {
+            return lhs == rhs;
+        }
+    };
+
     /**
      * @brief Concept to ensure a type can be stored in CellValue.
      */
@@ -357,7 +404,7 @@ namespace m2
          * @param selected_rows The selected rows of data.
          */
         CSVTable(const std::vector<std::string> &column_names,
-                 const std::map<std::string, int, std::less<>> &column_map,
+                 const std::unordered_map<std::string, int, string_hash, string_equal> &column_map,
                  const std::vector<std::vector<CellValue>> &selected_rows)
             : col_names(column_names), col_map(column_map), rows(selected_rows) {}
 
@@ -653,7 +700,11 @@ namespace m2
                 }
             }
 
-            // Read and append rows
+            // Read and append rows with progress reporting
+            size_t row_count = 0;
+            size_t progress_interval = 10000;  // Report every 10K rows
+            auto start_time = std::chrono::steady_clock::now();
+
             while (std::getline(file, line))
             {
                 std::vector<CellValue> row;
@@ -673,6 +724,20 @@ namespace m2
                     row.emplace_back(std::string(""));
                 }
                 rows.push_back(std::move(row));
+
+                // Progress reporting
+                row_count++;
+                if (row_count % progress_interval == 0) {
+                    auto now = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+                    double rows_per_sec = row_count * 1000.0 / (elapsed + 1);
+                    std::cerr << "\rReading CSV: " << row_count << " rows ("
+                              << std::fixed << std::setprecision(0) << rows_per_sec << " rows/sec)"
+                              << std::flush;
+                }
+            }
+            if (row_count > 0) {
+                std::cerr << "\rRead CSV: " << row_count << " rows total" << std::string(20, ' ') << std::endl;
             }
         }
     
@@ -892,6 +957,8 @@ namespace m2
         std::vector<int> filter_rows(const std::function<bool(int, const CSVTable &)> &predicate) const
         {
             std::vector<int> matching_rows;
+            matching_rows.reserve(rows.size() / 10);  // Reserve some space (assume ~10% match)
+
             for (int i : std::views::iota(0, static_cast<int>(rows.size())))
             {
                 if (predicate(i, *this))
@@ -914,6 +981,97 @@ namespace m2
         }
 
         /**
+         * @brief Creates a new table with rows that match a predicate (optimized, with progress).
+         * @param predicate A function that takes a row index and the table, returning true if the row should be included.
+         * @param show_progress If true, display progress to stderr.
+         * @param expected_selectivity Expected fraction of rows to match (0.0 to 1.0). Default 0.5 (50%).
+         * @return CSVTable A new table with the filtered rows.
+         */
+        CSVTable filter_table_fast(const std::function<bool(int, const CSVTable &)> &predicate, bool show_progress = false, double expected_selectivity = 0.5) const
+        {
+            std::vector<std::vector<CellValue>> selected_rows;
+            size_t reserve_size = static_cast<size_t>(rows.size() * std::clamp(expected_selectivity, 0.0, 1.0));
+            selected_rows.reserve(std::max(size_t(1), reserve_size));  // Reserve based on expected selectivity
+
+            size_t progress_interval = show_progress ? std::max(size_t(1), rows.size() / 100) : rows.size() + 1;
+            auto start_time = std::chrono::steady_clock::now();
+
+            for (size_t i = 0; i < rows.size(); ++i)
+            {
+                // Progress reporting
+                if (show_progress && (i % progress_interval == 0 || i == rows.size() - 1)) {
+                    double progress = (i + 1) * 100.0 / rows.size();
+                    auto now = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+                    double rows_per_sec = (i + 1) * 1000.0 / (elapsed + 1);
+
+                    std::cerr << "\rFiltering: " << std::fixed << std::setprecision(1)
+                              << progress << "% (" << (i + 1) << "/" << rows.size()
+                              << " rows, " << selected_rows.size() << " match, "
+                              << std::setprecision(0) << rows_per_sec << " rows/sec)"
+                              << std::flush;
+                }
+
+                if (predicate(i, *this))
+                {
+                    selected_rows.push_back(rows[i]);
+                }
+            }
+
+            if (show_progress) {
+                std::cerr << std::endl;
+            }
+
+            return CSVTable(col_names, col_map, std::move(selected_rows));
+        }
+
+        /**
+         * @brief Filters rows in-place to conserve memory (modifies the table).
+         * @param predicate A function that takes a row index and the table, returning true if the row should be kept.
+         * @param show_progress If true, display progress to stderr.
+         * @return size_t The number of rows remaining after filtering.
+         */
+        size_t filter_in_place(const std::function<bool(int, const CSVTable &)> &predicate, bool show_progress = false)
+        {
+            size_t progress_interval = show_progress ? std::max(size_t(1), rows.size() / 100) : rows.size() + 1;
+            auto start_time = std::chrono::steady_clock::now();
+
+            size_t write_idx = 0;
+            for (size_t read_idx = 0; read_idx < rows.size(); ++read_idx)
+            {
+                // Progress reporting
+                if (show_progress && (read_idx % progress_interval == 0 || read_idx == rows.size() - 1)) {
+                    double progress = (read_idx + 1) * 100.0 / rows.size();
+                    auto now = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+                    double rows_per_sec = (read_idx + 1) * 1000.0 / (elapsed + 1);
+
+                    std::cerr << "\rFiltering in-place: " << std::fixed << std::setprecision(1)
+                              << progress << "% (" << (read_idx + 1) << "/" << rows.size()
+                              << " rows, " << write_idx << " kept, "
+                              << std::setprecision(0) << rows_per_sec << " rows/sec)"
+                              << std::flush;
+                }
+
+                if (predicate(read_idx, *this))
+                {
+                    if (write_idx != read_idx) {
+                        rows[write_idx] = std::move(rows[read_idx]);
+                    }
+                    ++write_idx;
+                }
+            }
+
+            if (show_progress) {
+                std::cerr << std::endl;
+            }
+
+            // Resize to actual number of kept rows
+            rows.resize(write_idx);
+            return write_idx;
+        }
+
+        /**
          * @brief Creates a sub-table with selected rows.
          * @param row_indices The indices of the rows to include.
          * @return CSVTable A new table with the selected rows.
@@ -922,6 +1080,8 @@ namespace m2
         CSVTable sub_table(const std::vector<int> &row_indices) const
         {
             std::vector<std::vector<CellValue>> selected_rows;
+            selected_rows.reserve(row_indices.size());  // Reserve exact size
+
             for (int idx : row_indices)
             {
                 if (static_cast<size_t>(idx) >= rows.size())
@@ -930,7 +1090,7 @@ namespace m2
                 }
                 selected_rows.push_back(rows[idx]);
             }
-            return CSVTable(col_names, col_map, selected_rows);
+            return CSVTable(col_names, col_map, std::move(selected_rows));
         }
 
         /**
@@ -993,7 +1153,7 @@ namespace m2
          * @param rename_map A map from old column names to new column names.
          * @throws std::invalid_argument If an old column does not exist or a new column name already exists.
          */
-        void rename_columns(const std::map<std::string, std::string, std::less<>> &rename_map)
+        void rename_columns(const std::unordered_map<std::string, std::string, string_hash, string_equal> &rename_map)
         {
             for (const auto &[old_name, new_name] : rename_map)
             {
@@ -1132,7 +1292,7 @@ namespace m2
             }
 
             std::vector<std::string> new_col_names = col_names;
-            std::map<std::string, int, std::less<>> new_col_map = col_map;
+            std::unordered_map<std::string, int, string_hash, string_equal> new_col_map = col_map;
             std::vector<std::string> other_to_new_names;
             size_t non_key_cols = 0;
             for (const auto &col : other.col_names)
@@ -1262,7 +1422,7 @@ namespace m2
                 }
             }
 
-            return CSVTable(new_col_names, new_col_map, new_rows);
+            return CSVTable(std::move(new_col_names), std::move(new_col_map), std::move(new_rows));
         }
 
         /**
@@ -1340,13 +1500,13 @@ namespace m2
                 new_rows.push_back(std::move(new_row));
             }
 
-            std::map<std::string, int, std::less<>> new_col_map;
+            std::unordered_map<std::string, int, string_hash, string_equal> new_col_map;
             for (size_t i = 0; i < new_col_names.size(); ++i)
             {
                 new_col_map[new_col_names[i]] = i;
             }
 
-            return CSVTable(new_col_names, new_col_map, new_rows);
+            return CSVTable(std::move(new_col_names), std::move(new_col_map), std::move(new_rows));
         }
 
         /**
@@ -1381,6 +1541,138 @@ namespace m2
                         file << ",";
                 }
                 file << "\n";
+            }
+        }
+
+        /**
+         * @brief Reads a Parquet file into the table.
+         * @param filename The path to the Parquet file.
+         * @throws std::runtime_error If the file cannot be opened or read.
+         */
+        void read_parquet(std::string_view filename)
+        {
+            try {
+                // Open the Parquet file
+                std::shared_ptr<arrow::io::ReadableFile> infile;
+                PARQUET_ASSIGN_OR_THROW(
+                    infile,
+                    arrow::io::ReadableFile::Open(std::string(filename))
+                );
+
+                // Create a Parquet reader
+                std::unique_ptr<parquet::arrow::FileReader> reader;
+                PARQUET_THROW_NOT_OK(
+                    parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader)
+                );
+
+                // Read the entire file as a table
+                std::shared_ptr<arrow::Table> table;
+                PARQUET_THROW_NOT_OK(reader->ReadTable(&table));
+
+                // Extract column names
+                std::vector<std::string> new_col_names;
+                for (int i = 0; i < table->num_columns(); ++i) {
+                    new_col_names.push_back(table->schema()->field(i)->name());
+                }
+
+                // Initialize or verify column names
+                if (col_names.empty()) {
+                    col_names = new_col_names;
+                    for (size_t i = 0; i < col_names.size(); ++i) {
+                        col_map[col_names[i]] = i;
+                    }
+                } else {
+                    if (new_col_names != col_names) {
+                        throw std::runtime_error("Column names in Parquet file do not match existing table");
+                    }
+                }
+
+                // Convert Arrow table to CSVTable rows
+                size_t num_rows = table->num_rows();
+                size_t num_cols = table->num_columns();
+
+                // Pre-extract all column arrays (MUCH faster!)
+                std::vector<std::shared_ptr<arrow::Array>> column_arrays;
+                column_arrays.reserve(num_cols);
+                for (int col_idx = 0; col_idx < table->num_columns(); ++col_idx) {
+                    auto chunked_array = table->column(col_idx);
+                    column_arrays.push_back(chunked_array->chunk(0));
+                }
+
+                // Reserve space for all rows
+                rows.reserve(num_rows);
+
+                // Progress reporting
+                size_t progress_interval = std::max(size_t(1), num_rows / 100);  // Report every 1%
+                auto start_time = std::chrono::steady_clock::now();
+
+                for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+                    std::vector<CellValue> row;
+                    row.reserve(num_cols);
+
+                    for (size_t col_idx = 0; col_idx < num_cols; ++col_idx) {
+                        CellValue cell_value = arrow_value_to_cell(column_arrays[col_idx], row_idx);
+                        row.push_back(cell_value);
+                    }
+                    rows.push_back(std::move(row));
+
+                    // Progress reporting
+                    if (row_idx % progress_interval == 0 || row_idx == num_rows - 1) {
+                        double progress = (row_idx + 1) * 100.0 / num_rows;
+                        auto now = std::chrono::steady_clock::now();
+                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+                        double rows_per_sec = (row_idx + 1) * 1000.0 / (elapsed + 1);
+
+                        std::cerr << "\rReading Parquet: " << std::fixed << std::setprecision(1)
+                                  << progress << "% (" << (row_idx + 1) << "/" << num_rows
+                                  << " rows, " << std::setprecision(0) << rows_per_sec << " rows/sec)"
+                                  << std::flush;
+                    }
+                }
+                std::cerr << std::endl;
+            } catch (const parquet::ParquetException& e) {
+                throw std::runtime_error("Parquet error: " + std::string(e.what()));
+            } catch (const arrow::Status& status) {
+                throw std::runtime_error("Arrow error: " + status.ToString());
+            }
+        }
+
+        /**
+         * @brief Saves the table to a Parquet file.
+         * @param filename The path to save the Parquet file.
+         * @throws std::runtime_error If the file cannot be written.
+         */
+        void save_to_parquet(std::string_view filename) const
+        {
+            try {
+                // Build Arrow schema and arrays
+                std::vector<std::shared_ptr<arrow::Field>> fields;
+                std::vector<std::shared_ptr<arrow::Array>> arrays;
+
+                for (size_t col_idx = 0; col_idx < col_names.size(); ++col_idx) {
+                    auto [field, array] = build_arrow_column(col_idx);
+                    fields.push_back(field);
+                    arrays.push_back(array);
+                }
+
+                auto schema = arrow::schema(fields);
+                auto table = arrow::Table::Make(schema, arrays);
+
+                // Open output file
+                std::shared_ptr<arrow::io::FileOutputStream> outfile;
+                PARQUET_ASSIGN_OR_THROW(
+                    outfile,
+                    arrow::io::FileOutputStream::Open(std::string(filename))
+                );
+
+                // Write the table to Parquet
+                PARQUET_THROW_NOT_OK(
+                    parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, rows.size())
+                );
+            } catch (const parquet::ParquetException& e) {
+                throw std::runtime_error("Parquet error: " + std::string(e.what()));
+            } catch (const arrow::Status& status) {
+                throw std::runtime_error("Arrow error: " + status.ToString());
             }
         }
 
@@ -1466,6 +1758,16 @@ namespace m2
         size_t num_rows() const
         {
             return rows.size();
+        }
+
+        /**
+         * @brief Check if a column exists in the table.
+         * @param col_name The name of the column to check.
+         * @return bool True if the column exists, false otherwise.
+         */
+        bool has_column(std::string_view col_name) const
+        {
+            return col_map.contains(std::string(col_name));
         }
 
         /**
@@ -1709,7 +2011,15 @@ namespace m2
         if (column.size() < 2) {
             throw std::invalid_argument("Cannot compute standard deviation with fewer than 2 values in column: " + std::string(col_name));
         }
-        double m = mean(col_name);
+
+        // Compute mean from already-extracted column (don't call mean() - it re-extracts!)
+        double sum = 0.0;
+        for (double val : column) {
+            sum += val;
+        }
+        double m = sum / column.size();
+
+        // Compute variance
         double sum_sq_diff = 0.0;
         for (double val : column) {
             double diff = val - m;
@@ -1878,6 +2188,71 @@ namespace m2
     }
 
     /**
+     * @brief Get the column index for a column name (for caching in hot loops).
+     * @param col_name The column name.
+     * @return int The column index.
+     * @throws std::invalid_argument If the column does not exist.
+     */
+    int get_column_index(std::string_view col_name) const {
+        auto it = col_map.find(col_name);
+        if (it == col_map.end()) {
+            throw std::invalid_argument("Column not found: " + std::string(col_name));
+        }
+        return it->second;
+    }
+
+    /**
+     * @brief Get value by row and pre-computed column index (faster than by name).
+     * @tparam T The type to retrieve.
+     * @param row The row index.
+     * @param col_index The column index (from get_column_index).
+     * @return T The value cast to type T.
+     * @throws std::out_of_range If the row index is invalid.
+     */
+    template <ConvertibleToCellValue T>
+    T get_by_index(int row, int col_index) const {
+        if (row < 0 || static_cast<size_t>(row) >= rows.size()) {
+            throw std::out_of_range("Row index out of range");
+        }
+        return convert_cell<T>(rows[row][col_index]);
+    }
+
+    /**
+     * @brief Extract multiple columns at once to amortize map lookups.
+     * @tparam T The type to extract.
+     * @param col_names The column names to extract.
+     * @return std::vector<std::vector<T>> A vector of column vectors.
+     * @throws std::invalid_argument If any column does not exist.
+     */
+    template <ConvertibleToCellValue T>
+    std::vector<std::vector<T>> get_columns_as(const std::vector<std::string_view>& col_names) const {
+        // First, resolve all column indices
+        std::vector<int> col_indices;
+        col_indices.reserve(col_names.size());
+        for (const auto& col_name : col_names) {
+            auto it = col_map.find(col_name);
+            if (it == col_map.end()) {
+                throw std::invalid_argument("Column not found: " + std::string(col_name));
+            }
+            col_indices.push_back(it->second);
+        }
+
+        // Extract all columns
+        std::vector<std::vector<T>> result(col_names.size());
+        for (size_t i = 0; i < col_names.size(); ++i) {
+            result[i].reserve(rows.size());
+        }
+
+        for (const auto& row : rows) {
+            for (size_t i = 0; i < col_indices.size(); ++i) {
+                result[i].push_back(convert_cell<T>(row[col_indices[i]]));
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * @brief Retrieves a Row object for the specified row index.
      *
      * Returns a Row object that allows access to the row's values by column name.
@@ -1916,8 +2291,178 @@ namespace m2
     
     private:
         std::vector<std::string> col_names;
-        std::map<std::string, int, std::less<>> col_map;
+        std::unordered_map<std::string, int, string_hash, string_equal> col_map;
         std::vector<std::vector<CellValue>> rows;
+
+        /**
+         * @brief Converts an Arrow array value to a CellValue.
+         * @param array The Arrow array.
+         * @param row_idx The row index.
+         * @return CellValue The converted value.
+         */
+        static CellValue arrow_value_to_cell(const std::shared_ptr<arrow::Array>& array, size_t row_idx)
+        {
+            if (array->IsNull(row_idx)) {
+                return std::string("");
+            }
+
+            switch (array->type_id()) {
+                case arrow::Type::BOOL: {
+                    auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(array);
+                    return bool_array->Value(row_idx);
+                }
+                case arrow::Type::INT8:
+                case arrow::Type::INT16:
+                case arrow::Type::INT32: {
+                    auto int_array = std::static_pointer_cast<arrow::Int32Array>(array);
+                    return static_cast<int>(int_array->Value(row_idx));
+                }
+                case arrow::Type::INT64: {
+                    auto int64_array = std::static_pointer_cast<arrow::Int64Array>(array);
+                    int64_t val = int64_array->Value(row_idx);
+                    if (val >= 0) {
+                        return static_cast<uint64_t>(val);
+                    } else {
+                        return static_cast<int>(val);
+                    }
+                }
+                case arrow::Type::UINT8:
+                case arrow::Type::UINT16:
+                case arrow::Type::UINT32:
+                case arrow::Type::UINT64: {
+                    auto uint64_array = std::static_pointer_cast<arrow::UInt64Array>(array);
+                    return uint64_array->Value(row_idx);
+                }
+                case arrow::Type::FLOAT:
+                case arrow::Type::DOUBLE: {
+                    auto double_array = std::static_pointer_cast<arrow::DoubleArray>(array);
+                    return double_array->Value(row_idx);
+                }
+                case arrow::Type::STRING: {
+                    auto string_array = std::static_pointer_cast<arrow::StringArray>(array);
+                    return std::string(string_array->GetView(row_idx));
+                }
+                default: {
+                    // For unsupported types, convert to string
+                    return std::string("");
+                }
+            }
+        }
+
+        /**
+         * @brief Builds an Arrow column (field and array) from a CSVTable column.
+         * @param col_idx The column index.
+         * @return A pair of Arrow Field and Array.
+         */
+        std::pair<std::shared_ptr<arrow::Field>, std::shared_ptr<arrow::Array>>
+        build_arrow_column(size_t col_idx) const
+        {
+            const std::string& col_name = col_names[col_idx];
+
+            // Determine the column type by examining the first non-empty value
+            arrow::Type::type arrow_type = arrow::Type::STRING;
+
+            for (const auto& row : rows) {
+                const auto& cell = row[col_idx];
+                if (std::holds_alternative<int>(cell)) {
+                    arrow_type = arrow::Type::INT32;
+                    break;
+                } else if (std::holds_alternative<uint64_t>(cell)) {
+                    arrow_type = arrow::Type::UINT64;
+                    break;
+                } else if (std::holds_alternative<double>(cell)) {
+                    arrow_type = arrow::Type::DOUBLE;
+                    break;
+                } else if (std::holds_alternative<bool>(cell)) {
+                    arrow_type = arrow::Type::BOOL;
+                    break;
+                } else if (std::holds_alternative<std::string>(cell)) {
+                    auto str = std::get<std::string>(cell);
+                    if (!str.empty()) {
+                        arrow_type = arrow::Type::STRING;
+                        break;
+                    }
+                }
+            }
+
+            // Build the array based on the determined type
+            std::shared_ptr<arrow::Field> field;
+            std::shared_ptr<arrow::Array> array;
+
+            switch (arrow_type) {
+                case arrow::Type::BOOL: {
+                    arrow::BooleanBuilder builder;
+                    for (const auto& row : rows) {
+                        const auto& cell = row[col_idx];
+                        if (std::holds_alternative<bool>(cell)) {
+                            PARQUET_THROW_NOT_OK(builder.Append(std::get<bool>(cell)));
+                        } else {
+                            PARQUET_THROW_NOT_OK(builder.AppendNull());
+                        }
+                    }
+                    PARQUET_THROW_NOT_OK(builder.Finish(&array));
+                    field = arrow::field(col_name, arrow::boolean());
+                    break;
+                }
+                case arrow::Type::INT32: {
+                    arrow::Int32Builder builder;
+                    for (const auto& row : rows) {
+                        const auto& cell = row[col_idx];
+                        if (std::holds_alternative<int>(cell)) {
+                            PARQUET_THROW_NOT_OK(builder.Append(std::get<int>(cell)));
+                        } else {
+                            PARQUET_THROW_NOT_OK(builder.AppendNull());
+                        }
+                    }
+                    PARQUET_THROW_NOT_OK(builder.Finish(&array));
+                    field = arrow::field(col_name, arrow::int32());
+                    break;
+                }
+                case arrow::Type::UINT64: {
+                    arrow::UInt64Builder builder;
+                    for (const auto& row : rows) {
+                        const auto& cell = row[col_idx];
+                        if (std::holds_alternative<uint64_t>(cell)) {
+                            PARQUET_THROW_NOT_OK(builder.Append(std::get<uint64_t>(cell)));
+                        } else {
+                            PARQUET_THROW_NOT_OK(builder.AppendNull());
+                        }
+                    }
+                    PARQUET_THROW_NOT_OK(builder.Finish(&array));
+                    field = arrow::field(col_name, arrow::uint64());
+                    break;
+                }
+                case arrow::Type::DOUBLE: {
+                    arrow::DoubleBuilder builder;
+                    for (const auto& row : rows) {
+                        const auto& cell = row[col_idx];
+                        if (std::holds_alternative<double>(cell)) {
+                            PARQUET_THROW_NOT_OK(builder.Append(std::get<double>(cell)));
+                        } else if (std::holds_alternative<int>(cell)) {
+                            PARQUET_THROW_NOT_OK(builder.Append(static_cast<double>(std::get<int>(cell))));
+                        } else {
+                            PARQUET_THROW_NOT_OK(builder.AppendNull());
+                        }
+                    }
+                    PARQUET_THROW_NOT_OK(builder.Finish(&array));
+                    field = arrow::field(col_name, arrow::float64());
+                    break;
+                }
+                default: {
+                    arrow::StringBuilder builder;
+                    for (const auto& row : rows) {
+                        const auto& cell = row[col_idx];
+                        std::string str_value = cell_to_string(cell);
+                        PARQUET_THROW_NOT_OK(builder.Append(str_value));
+                    }
+                    PARQUET_THROW_NOT_OK(builder.Finish(&array));
+                    field = arrow::field(col_name, arrow::utf8());
+                    break;
+                }
+            }
+
+            return {field, array};
+        }
     };
 
 } // namespace m2

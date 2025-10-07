@@ -5,7 +5,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
-#include <map>
+#include <unordered_map>
 
 // Helper function to create an example CSVTable with hard-coded data
 m2::CSVTable create_example_table() {
@@ -32,7 +32,7 @@ m2::CSVTable create_example_table() {
     }
     
     // Create column map
-    std::map<std::string, int, std::less<>> col_map;
+    std::unordered_map<std::string, int, m2::string_hash, m2::string_equal> col_map;
     for (size_t i = 0; i < col_names.size(); ++i) {
         col_map[col_names[i]] = i;
     }

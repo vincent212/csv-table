@@ -11,3 +11,6 @@ CMakeFiles/*
 *.o
 *.a
 *.P
+filter_perf
+FilterPerformanceTest
+test_has_column

@@ -671,6 +671,120 @@ TEST_F(CSVTableTest2, RowAssignmentAndAccess) {
 }
 
 
+// Test performance optimization methods
+TEST_F(CSVTableTest, GetColumnIndex) {
+    CSVTable table("test.csv");
+
+    // Test valid column
+    int age_idx = table.get_column_index("Age");
+    EXPECT_GE(age_idx, 0);
+    EXPECT_LT(age_idx, static_cast<int>(table.get_col_names().size()));
+
+    // Test invalid column
+    EXPECT_THROW(table.get_column_index("Invalid"), std::invalid_argument);
+}
+
+TEST_F(CSVTableTest, GetByIndex) {
+    CSVTable table("test.csv");
+
+    int age_idx = table.get_column_index("Age");
+    int name_idx = table.get_column_index("Name");
+
+    // Test get_by_index
+    EXPECT_EQ(table.get_by_index<int>(0, age_idx), 25);
+    EXPECT_EQ(table.get_by_index<std::string>(0, name_idx), "Alice");
+
+    // Test out of range
+    EXPECT_THROW(table.get_by_index<int>(999, age_idx), std::out_of_range);
+}
+
+TEST_F(CSVTableTest, GetColumnsAs) {
+    CSVTable table("test.csv");
+
+    // Extract Name and Age columns
+    auto name_col = table.get_columns_as<std::string>({"Name"});
+    EXPECT_EQ(name_col.size(), 1);
+    EXPECT_EQ(name_col[0].size(), 3);
+    EXPECT_EQ(name_col[0][0], "Alice");
+    EXPECT_EQ(name_col[0][1], "Bob");
+    EXPECT_EQ(name_col[0][2], "Charlie");
+
+    // Extract multiple numeric columns
+    table.set_column_type<int>("Age", true, 0);  // Handle missing values
+    auto age_col = table.get_columns_as<int>({"Age"});
+    EXPECT_EQ(age_col.size(), 1);
+    EXPECT_EQ(age_col[0].size(), 3);
+    EXPECT_EQ(age_col[0][0], 25);
+    EXPECT_EQ(age_col[0][1], 30);
+
+    // Test with invalid column
+    EXPECT_THROW(table.get_columns_as<std::string>({"Name", "Invalid"}), std::invalid_argument);
+}
+
+TEST_F(CSVTableTest, FilterTableFastWithSelectivity) {
+    CSVTable table;
+    table.add_column<int>("id");
+    table.add_column<double>("value");
+
+    // Add 1000 rows
+    for (int i = 0; i < 1000; ++i) {
+        table.append_row({i, static_cast<double>(i % 100)});
+    }
+
+    // Filter with high selectivity (expect 90% match)
+    auto filtered_high = table.filter_table_fast([](int row_idx, const CSVTable& t) {
+        return t.get<double>(row_idx, "value") < 90.0;
+    }, false, 0.9);
+
+    EXPECT_EQ(filtered_high.num_rows(), 900);
+
+    // Filter with low selectivity (expect 10% match)
+    auto filtered_low = table.filter_table_fast([](int row_idx, const CSVTable& t) {
+        return t.get<double>(row_idx, "value") < 10.0;
+    }, false, 0.1);
+
+    EXPECT_EQ(filtered_low.num_rows(), 100);
+}
+
+TEST_F(CSVTableTest, FilterInPlace) {
+    CSVTable table;
+    table.add_column<int>("id");
+    table.add_column<double>("value");
+
+    // Add 1000 rows
+    for (int i = 0; i < 1000; ++i) {
+        table.append_row({i, static_cast<double>(i % 100)});
+    }
+
+    EXPECT_EQ(table.num_rows(), 1000);
+
+    // Filter in-place: keep only values < 50
+    size_t rows_kept = table.filter_in_place([](int row_idx, const CSVTable& t) {
+        return t.get<double>(row_idx, "value") < 50.0;
+    }, false);
+
+    EXPECT_EQ(rows_kept, 500);
+    EXPECT_EQ(table.num_rows(), 500);
+
+    // Verify all remaining rows have value < 50
+    for (size_t i = 0; i < table.num_rows(); ++i) {
+        EXPECT_LT(table.get<double>(i, "value"), 50.0);
+    }
+
+    // Filter again: keep only values < 25
+    rows_kept = table.filter_in_place([](int row_idx, const CSVTable& t) {
+        return t.get<double>(row_idx, "value") < 25.0;
+    }, false);
+
+    EXPECT_EQ(rows_kept, 250);
+    EXPECT_EQ(table.num_rows(), 250);
+
+    // Verify all remaining rows have value < 25
+    for (size_t i = 0; i < table.num_rows(); ++i) {
+        EXPECT_LT(table.get<double>(i, "value"), 25.0);
+    }
+}
+
 } // namespace m2
 
 int main(int argc, char **argv) {

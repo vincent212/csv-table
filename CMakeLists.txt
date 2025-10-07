@@ -16,25 +16,37 @@ set(HEADER_FILES
 find_package(GTest REQUIRED)
 include_directories(${GTEST_INCLUDE_DIRS})
 
+# Find Apache Arrow and Parquet
+find_package(Arrow REQUIRED)
+find_package(Parquet REQUIRED)
+
 # Compiler flags
 add_compile_options(-Wall -Wextra -O0 -ggdb)
 
 # Executable for Example_uint64.cpp
 add_executable(examples_uint64 Example_uint64.cpp ${HEADER_FILES})
 target_include_directories(examples_uint64 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(examples_uint64 PRIVATE arrow_shared parquet_shared)
 
 # Executable for IterateExamples.cpp
 add_executable(examples_iterate IterateExamples.cpp ${HEADER_FILES})
 target_include_directories(examples_iterate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(examples_iterate PRIVATE arrow_shared parquet_shared)
 
 # Executable for CSVTableExamples.cpp
 add_executable(examples_general CSVTableExamples.cpp ${HEADER_FILES})
 target_include_directories(examples_general PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(examples_general PRIVATE arrow_shared parquet_shared)
+
+# Executable for ParquetExamples.cpp
+add_executable(examples_parquet ParquetExamples.cpp ${HEADER_FILES})
+target_include_directories(examples_parquet PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(examples_parquet PRIVATE arrow_shared parquet_shared)
 
 # Executable for CSVTableTests.cpp (with Google Test)
 add_executable(tests CSVTableTests.cpp ${HEADER_FILES})
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(tests PRIVATE GTest::GTest GTest::Main)
+target_link_libraries(tests PRIVATE GTest::GTest GTest::Main arrow_shared parquet_shared)
 
 # Enable testing
 enable_testing()
